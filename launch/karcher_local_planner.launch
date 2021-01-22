@@ -18,18 +18,22 @@
         
         <param name="global_path_rviz_topic"        value="/global_path_rviz" />
         <param name="extracted_path_rviz_topic"     value="/extracted_path_rviz" />
-        <param name="current_pose_rviz_topic"       value="/current_pose_rviz_" />
+        <param name="current_pose_rviz_topic"       value="/current_pose_rviz" />
+        <param name="roll_outs_rviz_topic"          value="/roll_outs_rviz" />
         <param name="cmd_vel_topic"                 value="/cmd_vel" />
 
         <param name="planning_frequency"            value="1" />
 
         <param name="max_speed"                     value="2" />
-        <param name="min_local_plan_distance"       value="5" />
-        <param name="path_density"                  value="0.5" />
+        <param name="max_local_plan_distance"       value="7" />
+        <param name="path_density"                  value="0.2" />
         <param name="roll_outs_number"              value="8" />
         <param name="sampling_tip_margin"           value="1.2" />
         <param name="sampling_out_margin"           value="5" />
         <param name="roll_out_density"              value="0.2" />
+        <param name="roll_in_speed_factor"          value="0.2" />
+        <param name="roll_in_margin"                value="4" />
+        <param name="lane_change_speed_factor"      value="0.5" />
 
         <param name="min_following_distance"        value="10" />
         <param name="max_following_distance"        value="10" />
@@ -40,8 +44,8 @@
         <param name="wheelbase_length"              value="1.006" />
         <param name="turning_radius"                value="1.5" />
 
-        <param name="smooth_data_weight"            value="0.8" /> <!--0.45-->
-        <param name="smooth_weight"                 value="0.2" />  <!--0.4-->
+        <param name="smooth_data_weight"            value="0.45" /> <!--0.45-->
+        <param name="smooth_weight"                 value="0.4" /> <!--0.4-->
         <param name="smooth_tolerance"              value="0.1" />
     </node>
 
@@ -52,9 +56,9 @@
 
     <!-- ****** AMCL ***** -->
     <node pkg="amcl" type="amcl" name="amcl" output="screen">
-        <param name="initial_pose_x"        value="8"/>
-        <param name="initial_pose_y"        value="21.5"/>
-        <param name="initial_pose_a"        value="0"/>
+        <param name="initial_pose_x"        value="13.5"/> <!--8.0--> <!--13.5-->
+        <param name="initial_pose_y"        value="21"/>   <!--21.5--> <!--21-->
+        <param name="initial_pose_a"        value="-1.570796"/> <!--0--> <!-- -1.570796 -->
         <param name="odom_model_type"       value="diff"/>
         <param name="use_map_topic"         value="true"/>
         <param name="transform_tolerance"   value="0.5"/>

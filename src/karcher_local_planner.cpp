@@ -8,6 +8,8 @@
 #include <geometry_msgs/PoseStamped.h>
 #include <geometry_msgs/PoseArray.h>
 #include <geometry_msgs/Twist.h>
+#include <visualization_msgs/Marker.h>
+#include <visualization_msgs/MarkerArray.h>
 
 #include "karcher_local_planner/Waypoint.h"
 #include "karcher_local_planner/WaypointArray.h"
@@ -30,6 +32,7 @@ typedef struct
     double left_width;
     double right_width;
     double cost;
+    double speed;
 } Waypoint;
 
 typedef struct  
@@ -57,13 +60,15 @@ private:
 
     // parameters
     double MAX_SPEED_;                  // max speed that planner should not exceed
-    double MIN_LOCAL_PLAN_DISTANCE_;    // length of local trajectory roll outs
+    double MAX_LOCAL_PLAN_DISTANCE_;    // length of local trajectory roll outs
     double PATH_DENSITY_;               // distance between waypoints of local trajectory
     int ROLL_OUTS_NUMBER_;              // number of roll outs not including the center tracjectory (this number should be even)
     double SAMPLING_TIP_MARGIN_;        // length of car tip margin
     double SAMPLING_OUT_MARGIN_;        // length of roll in margin (??)
     double ROLL_OUT_DENSITY_;           // distance between adjacent trajectories
-    
+    double ROLL_IN_SPEED_FACTOR_;
+    double ROLL_IN_MARGIN_;
+    double LANE_CHANGE_SPEED_FACTOR_;
 
     double MIN_FOLLOWING_DISTANCE_;     // distance threshold for exiting following behaviour
     double MAX_FOLLOWING_DISTANCE_;     // distance threshold for entering following behaviour
@@ -90,6 +95,7 @@ private:
     ros::Publisher global_path_rviz_pub;
     ros::Publisher extracted_path_rviz_pub;
     ros::Publisher current_pose_rviz_pub;
+    ros::Publisher roll_outs_rviz_pub;
     ros::Publisher cmd_vel_pub;
 
     // timer
@@ -112,16 +118,18 @@ private:
     void visualizeExtractedPath(const std::vector<Waypoint>& extracted_path);
     void publishCmdVel();
     void visualizeCurrentPose();
+    void visualizeRollOuts(const std::vector<std::vector<Waypoint>>& roll_outs);
 
     // Local Planning functions
     void extractGlobalPathSection(std::vector<Waypoint>& extracted_path);
-    int getClosestNextWaypointIndex();
+    int getClosestNextWaypointIndex(const std::vector<Waypoint>& path);
     double angleBetweenTwoAnglesPositive(const double& a1, const double& a2);
     double fixNegativeAngle(const double& a);
     void fixPathDensity(std::vector<Waypoint>& path);
     void smoothPath(std::vector<Waypoint>& path);
     double calculateAngleAndCost(std::vector<Waypoint>& path);
-    void generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>> roll_outs);
+    void generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>>& roll_outs);
+    bool getRelativeInfo(const std::vector<Waypoint>& trajectory, int& back_index, double& perp_distance);
 
     // Variables
     bool b_global_path;
@@ -147,6 +155,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     std::string global_path_rviz_topic_;
     std::string extracted_path_rviz_topic_;
     std::string current_pose_rviz_topic_;
+    std::string roll_outs_rviz_topic_;
     std::string cmd_vel_topic_;
 
     // // Parameters from launch file: topic names
@@ -157,6 +166,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     ROS_ASSERT(private_nh.getParam("global_path_rviz_topic", global_path_rviz_topic_));
     ROS_ASSERT(private_nh.getParam("extracted_path_rviz_topic", extracted_path_rviz_topic_));
     ROS_ASSERT(private_nh.getParam("current_pose_rviz_topic", current_pose_rviz_topic_));
+    ROS_ASSERT(private_nh.getParam("roll_outs_rviz_topic", roll_outs_rviz_topic_));
     ROS_ASSERT(private_nh.getParam("cmd_vel_topic", cmd_vel_topic_));
 
     // Hyperparameters
@@ -164,12 +174,15 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
 
     // Parameters from launch file: Planner Parameters
     ROS_ASSERT(private_nh.getParam("max_speed", MAX_SPEED_));    
-    ROS_ASSERT(private_nh.getParam("min_local_plan_distance", MIN_LOCAL_PLAN_DISTANCE_));   
+    ROS_ASSERT(private_nh.getParam("max_local_plan_distance", MAX_LOCAL_PLAN_DISTANCE_));   
     ROS_ASSERT(private_nh.getParam("path_density", PATH_DENSITY_));        
     ROS_ASSERT(private_nh.getParam("roll_outs_number", ROLL_OUTS_NUMBER_));           
     ROS_ASSERT(private_nh.getParam("sampling_tip_margin", SAMPLING_TIP_MARGIN_));     
     ROS_ASSERT(private_nh.getParam("sampling_out_margin", SAMPLING_OUT_MARGIN_));     
     ROS_ASSERT(private_nh.getParam("roll_out_density", ROLL_OUT_DENSITY_)); 
+    ROS_ASSERT(private_nh.getParam("roll_in_speed_factor", ROLL_IN_SPEED_FACTOR_)); 
+    ROS_ASSERT(private_nh.getParam("roll_in_margin", ROLL_IN_MARGIN_)); 
+    ROS_ASSERT(private_nh.getParam("lane_change_speed_factor", LANE_CHANGE_SPEED_FACTOR_)); 
     
     ROS_ASSERT(private_nh.getParam("min_following_distance", MIN_FOLLOWING_DISTANCE_));   
     ROS_ASSERT(private_nh.getParam("max_following_distance", MAX_FOLLOWING_DISTANCE_));       
@@ -193,6 +206,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     global_path_rviz_pub = nh.advertise<nav_msgs::Path>(global_path_rviz_topic_, 1, true);
     extracted_path_rviz_pub = nh.advertise<nav_msgs::Path>(extracted_path_rviz_topic_, 1, true);
     current_pose_rviz_pub = nh.advertise<geometry_msgs::PoseStamped>(current_pose_rviz_topic_, 1, true);
+    roll_outs_rviz_pub = nh.advertise<visualization_msgs::MarkerArray>(roll_outs_rviz_topic_, 1, true);
     cmd_vel_pub = nh.advertise<geometry_msgs::Twist>(cmd_vel_topic_, 1);
 
     // timer
@@ -202,6 +216,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     b_vehicle_state = false;
     b_obstacles = false;
     prev_closest_index = 0;
+    prev_cost = 0;
 };
 
 void KarcherLocalPlannerNode::mainTimerCallback(const ros::TimerEvent& timer_event)
@@ -229,7 +244,7 @@ void KarcherLocalPlannerNode::mainTimerCallback(const ros::TimerEvent& timer_eve
     extractGlobalPathSection(extracted_path);
 
     std::vector<std::vector<Waypoint>> roll_outs;
-    // generateRollOuts(extracted_path, roll_outs);
+    generateRollOuts(extracted_path, roll_outs);
 
 
 }
@@ -314,6 +329,50 @@ void KarcherLocalPlannerNode::visualizeExtractedPath(const std::vector<Waypoint>
   extracted_path_rviz_pub.publish(path);
 }
 
+void KarcherLocalPlannerNode::visualizeRollOuts(const std::vector<std::vector<Waypoint>>& roll_outs)
+{
+    // ROS_INFO_STREAM("Number of roll outs: " << roll_outs.size());
+    visualization_msgs::MarkerArray markerArray;
+    visualization_msgs::Marker lane_waypoint_marker;
+    lane_waypoint_marker.header.frame_id = "map";
+    lane_waypoint_marker.header.stamp = ros::Time();
+    lane_waypoint_marker.ns = "local_roll_outs_marker";
+    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
+    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
+    lane_waypoint_marker.scale.x = 0.01;
+    lane_waypoint_marker.scale.y = 0.01;
+    //lane_waypoint_marker.scale.z = 0.1;
+    lane_waypoint_marker.frame_locked = false;
+    // std_msgs::ColorRGBA  total_color, curr_color;
+
+    int count = 0;
+    for(int i = 0; i < roll_outs.size(); i++)
+    {
+        lane_waypoint_marker.points.clear();
+        lane_waypoint_marker.id = count;
+        // ROS_INFO_STREAM("Number of points in roll out " << i << ": " << roll_outs[i].size());
+
+        for(int j = 0; j < roll_outs[i].size(); j++)
+        {            
+            geometry_msgs::Point point;
+            point.x = roll_outs[i][j].x;
+            point.y = roll_outs[i][j].y;
+            point.z = 0;
+            lane_waypoint_marker.points.push_back(point);
+        }
+
+        lane_waypoint_marker.color.a = 0.9;
+        lane_waypoint_marker.color.r = 0.0;
+        lane_waypoint_marker.color.g = 0.0;
+        lane_waypoint_marker.color.b = 1.0;
+
+        markerArray.markers.push_back(lane_waypoint_marker);
+        count++;
+    }
+
+    roll_outs_rviz_pub.publish(markerArray);
+}
+
 void KarcherLocalPlannerNode::visualizeCurrentPose()
 {
     geometry_msgs::PoseStamped pose;
@@ -356,6 +415,7 @@ void KarcherLocalPlannerNode::globalPathCallback(const karcher_local_planner::Wa
         wp.left_width = global_path_msg->waypoints[i].left_width;
         wp.right_width = global_path_msg->waypoints[i].right_width;
         wp.cost = 0;
+        wp.speed = 0;
 
         global_path.push_back(wp);
     }
@@ -369,13 +429,13 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
 
     extracted_path.clear();
 
-    int closest_index = getClosestNextWaypointIndex();
+    int closest_index = getClosestNextWaypointIndex(global_path);
 
     if(closest_index + 1 >= global_path.size())
         closest_index = global_path.size() - 2;
     
-    prev_closest_index = closest_index;
-    prev_cost = global_path[prev_closest_index].cost;
+    // prev_closest_index = closest_index;
+    // prev_cost = global_path[prev_closest_index].cost;
 
     double d = 0;
 
@@ -390,13 +450,13 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
     //         break;
     // }
 
-    d = 0;
-    for(int i = closest_index + 1; i < (int)global_path.size(); i++)
+    // d = 0;
+    for(int i = closest_index; i < (int)global_path.size(); i++)
     {
         extracted_path.push_back(global_path[i]);
         if(i > 0)
             d += hypot(global_path[i].x - global_path[i-1].x, global_path[i].y - global_path[i-1].y);
-        if(d > MIN_LOCAL_PLAN_DISTANCE_)
+        if(d > MAX_LOCAL_PLAN_DISTANCE_)
             break;
     }
 
@@ -412,24 +472,24 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
     visualizeExtractedPath(extracted_path);
 }
 
-int KarcherLocalPlannerNode::getClosestNextWaypointIndex()
+int KarcherLocalPlannerNode::getClosestNextWaypointIndex(const std::vector<Waypoint>& path)
 {   
-    double d = 0, minD = DBL_MAX;
+    double d = 0, min_d = DBL_MAX;
     int min_index = prev_closest_index;
 
-    for(int i = prev_closest_index; i < global_path.size(); i++)
+    for(int i = prev_closest_index; i < path.size(); i++)
     {
-        d = distance2pointsSqr(global_path[i], current_state);
-        double angle_diff = angleBetweenTwoAnglesPositive(global_path[i].heading, current_state.yaw)*RAD2DEG;
+        d = distance2pointsSqr(path[i], current_state);
+        double angle_diff = angleBetweenTwoAnglesPositive(path[i].heading, current_state.yaw)*RAD2DEG;
 
-        if(d < minD && angle_diff < 45)
+        if(d < min_d && angle_diff < 45)
         {
             min_index = i;
-            minD = d;
+            min_d = d;
         }
     }
 
-    ROS_INFO("Closest Global Waypoint Index = %d", min_index);
+    // ROS_INFO("Closest Global Waypoint Index = %d", min_index);
 
     // if(min_index < int(global_path.size()-2))
     // {
@@ -487,42 +547,42 @@ void KarcherLocalPlannerNode::fixPathDensity(std::vector<Waypoint> &path)
     double d = 0, a = 0;
     double margin = PATH_DENSITY_ * 0.01;
     double remaining = 0;
-    int nPoints = 0;
+    int num_points = 0;
     std::vector<Waypoint> fixed_path;
     fixed_path.push_back(path[0]);
-    for(unsigned int si = 0, ei = 1; ei < path.size(); )
+    for(int start_index = 0, end_index = 1; end_index < path.size(); )
     {
-        d += hypot(path[ei].x - path[ei-1].x, path[ei].y - path[ei-1].y) + remaining;
-        a = atan2(path[ei].y - path[si].y, path[ei].x - path[si].x);
+        d += hypot(path[end_index].x - path[end_index-1].x, path[end_index].y - path[end_index-1].y) + remaining;
+        a = atan2(path[end_index].y - path[start_index].y, path[end_index].x - path[start_index].x);
 
-        if(d < PATH_DENSITY_ - margin ) // skip
+        if(d < PATH_DENSITY_ - margin ) // downsample
         {
-            ei++;
+            end_index++;
             remaining = 0;
         }
-        else if(d > (PATH_DENSITY_ +  margin)) // skip
+        else if(d > (PATH_DENSITY_ +  margin)) // upsample
         {
-            Waypoint pm = path[si];
-            nPoints = d  / PATH_DENSITY_;
-            for(int k = 0; k < nPoints; k++)
+            Waypoint new_wp = path[start_index];
+            num_points = d / PATH_DENSITY_;
+            for(int k = 0; k < num_points; k++)
             {
-                pm.x = pm.x + PATH_DENSITY_ * cos(a);
-                pm.y = pm.y + PATH_DENSITY_ * sin(a);
-                fixed_path.push_back(pm);
+                new_wp.x = new_wp.x + PATH_DENSITY_ * cos(a);
+                new_wp.y = new_wp.y + PATH_DENSITY_ * sin(a);
+                fixed_path.push_back(new_wp);
             }
-            remaining = d - nPoints*PATH_DENSITY_;
-            si++;
-            path[si] = pm;
+            remaining = d - num_points * PATH_DENSITY_;
+            start_index++;
+            path[start_index] = new_wp;
             d = 0;
-            ei++;
+            end_index++;
         }
         else
         {
             d = 0;
             remaining = 0;
-            fixed_path.push_back(path[ei]);
-            ei++;
-            si = ei - 1;
+            fixed_path.push_back(path[end_index]);
+            end_index++;
+            start_index = end_index - 1;
         }
     }
 
@@ -559,7 +619,7 @@ void KarcherLocalPlannerNode::smoothPath(std::vector<Waypoint> &path)
     nIterations++;
   }
 
-  ROS_INFO("Number of iterations: %d", nIterations);
+//   ROS_INFO("Number of iterations: %d", nIterations);
 
   path = smoothed_path;
 }
@@ -570,19 +630,22 @@ double KarcherLocalPlannerNode::calculateAngleAndCost(std::vector<Waypoint> &pat
 
     if(path.size() == 2)
     {
-        path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+        // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+        path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
         path[0].cost = prev_cost;
         path[1].heading = path[0].heading;
         path[1].cost = path[0].cost + distance2points(path[0], path[1]);
         return path[1].cost;
     }
 
-    path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+    // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+    path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
     path[0].cost = prev_cost;
 
     for(int j = 1; j < path.size()-1; j++)
     {
-        path[j].heading = fixNegativeAngle(atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x));
+        // path[j].heading = fixNegativeAngle(atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x));
+        path[j].heading = atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x);
         path[j].cost = path[j-1].cost +  distance2points(path[j-1], path[j]);
     }
 
@@ -600,307 +663,295 @@ double KarcherLocalPlannerNode::calculateAngleAndCost(std::vector<Waypoint> &pat
     return path[j].cost;
 }
 
-void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>> roll_outs)
+void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>>& roll_outs)
 {
+    std::cout << "path size: " << path.size() << std::endl;
+    if(path.size() == 0) return;
+    if(MAX_LOCAL_PLAN_DISTANCE_ <= 0) return;
+    roll_outs.clear();
 
+    int i_limit_index = (SAMPLING_TIP_MARGIN_/0.3)/PATH_DENSITY_;
+    if(i_limit_index >= path.size())
+        i_limit_index = path.size() - 1;
+    std::cout << "i_limit_index: " << i_limit_index << std::endl;
+
+    int closest_index;
+    double initial_roll_in_distance;
+    
+    getRelativeInfo(path, closest_index, initial_roll_in_distance);
+    std::cout << "closest_index: " << closest_index << std::endl;
+    std::cout << "initial_roll_in_distance: " << initial_roll_in_distance << std::endl;
+
+    double remaining_distance = 0;
+    for(int i = 0; i < path.size()-1; i++)
+    {
+        remaining_distance += distance2points(path[i], path[i+1]);
+    }
+    std::cout << "remaining_distance: " << remaining_distance << std::endl;
+
+    // calculate the starting index
+    double d_limit = 0;
+    int start_index = 0; 
+    int end_index = 0;
+    // int far_index = closest_index;
+
+    // calculate end index
+    double start_distance = ROLL_IN_SPEED_FACTOR_ * current_state.speed + ROLL_IN_MARGIN_;
+    if(start_distance > remaining_distance)
+        start_distance = remaining_distance;
+    std::cout << "start_distance: " << start_distance << std::endl;
+
+    d_limit = 0;
+    for(int i = 0; i < path.size()-1; i++)
+    {
+        d_limit += distance2points(path[i], path[i+1]);
+
+        if(d_limit >= start_distance)
+        {
+            end_index = i;
+            break;
+        }
+    }
+    // std::cout << "far_index: " << far_index << std::endl;
+
+    int central_trajectory_index = ROLL_OUTS_NUMBER_/2;
+    std::vector<double> end_laterals;
+    for(int i = 0; i< ROLL_OUTS_NUMBER_+1; i++)
+    {
+        double end_roll_in_distance = ROLL_OUT_DENSITY_ * (i - central_trajectory_index);
+        end_laterals.push_back(end_roll_in_distance);
+        // std::cout << "roll out num: " << i << ", end_roll_in_distance: " << end_roll_in_distance << std::endl;
+    }
+
+    // calculate the actual calculation starting index
+    d_limit = 0;
+    int smoothing_start_index = start_index;
+    int smoothing_end_index = end_index;
+
+    for(int i = smoothing_start_index; i < path.size(); i++)
+    {
+        if(i > 0)
+            d_limit += distance2points(path[i], path[i-1]);
+        if(d_limit > SAMPLING_TIP_MARGIN_)
+            break;
+
+        smoothing_start_index++;
+    }
+
+    d_limit = 0;
+    for(int i = end_index; i < path.size(); i++)
+    {
+        if(i > 0)
+            d_limit += distance2points(path[i], path[i-1]);
+        if(d_limit > SAMPLING_TIP_MARGIN_)
+            break;
+
+        smoothing_end_index++;
+    }
+    std::cout << "start_index: " << start_index << ", end_index: " << end_index << ", smoothing_start_index: " 
+                << smoothing_start_index << ", smoothing_end_index: " << smoothing_end_index << std::endl;
+
+    int nSteps = end_index - smoothing_start_index;
+    std::cout << "nSteps: " << nSteps << std::endl;
+
+    std::vector<double> inc_list;
+    std::vector<double> inc_list_inc;
+    for(int i = 0; i< ROLL_OUTS_NUMBER_+1; i++)
+    {
+        double diff = end_laterals[i] - initial_roll_in_distance;
+        // std::cout << "diff: " << diff << std::endl;
+        inc_list.push_back(diff/(double)nSteps);
+        roll_outs.push_back(std::vector<Waypoint>());
+        inc_list_inc.push_back(0);
+    }
+
+    std::vector<std::vector<Waypoint>> excluded_from_smoothing;
+    for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+        excluded_from_smoothing.push_back(std::vector<Waypoint>());
+
+    Waypoint wp;
+    // Insert first straight points within the tip of the car range
+    for(int j = start_index; j < smoothing_start_index; j++)
+    {
+        wp = path[j];
+        double original_speed = wp.speed;
+        for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+        {
+            wp.x = path[j].x - initial_roll_in_distance * cos(wp.heading + M_PI_2);
+            wp.y = path[j].y - initial_roll_in_distance * sin(wp.heading + M_PI_2);
+            if(i != central_trajectory_index)
+                wp.speed = original_speed * LANE_CHANGE_SPEED_FACTOR_;
+            else
+                wp.speed = original_speed;
+
+            if(j < i_limit_index)
+                excluded_from_smoothing[i].push_back(wp);
+            else
+                roll_outs[i].push_back(wp);
+        }
+    }
+
+    for(int j = smoothing_start_index; j < end_index; j++)
+    {
+        wp = path[j];
+        double original_speed = wp.speed;
+        for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+        {
+            inc_list_inc[i] += inc_list[i];
+            double d = inc_list_inc[i];
+            wp.x = path[j].x - initial_roll_in_distance * cos(wp.heading + M_PI_2) - d * cos(wp.heading + M_PI_2);
+            wp.y = path[j].y - initial_roll_in_distance * sin(wp.heading + M_PI_2) - d * sin(wp.heading + M_PI_2);
+
+            if(i != central_trajectory_index)
+                wp.speed = original_speed * LANE_CHANGE_SPEED_FACTOR_;
+            else
+                wp.speed = original_speed;
+
+            roll_outs[i].push_back(wp);
+        }
+    }
+
+    // Insert last straight points to make better smoothing
+    for(int j = end_index; j < smoothing_end_index; j++)
+    {
+        wp = path[j];
+        double original_speed = wp.speed;
+        for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+        {
+            double d = end_laterals[i];
+            wp.x = path[j].x - d * cos(wp.heading + M_PI_2);
+            wp.y = path[j].y - d * sin(wp.heading + M_PI_2);
+            if(i != central_trajectory_index)
+                wp.speed = original_speed * LANE_CHANGE_SPEED_FACTOR_;
+            else
+                wp.speed = original_speed;
+            roll_outs[i].push_back(wp);
+        }
+    }
+
+    for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+        roll_outs[i].insert(roll_outs[i].begin(), excluded_from_smoothing[i].begin(), excluded_from_smoothing[i].end());
+
+    d_limit = 0;
+    for(int j = smoothing_end_index; j < path.size(); j++)
+    {
+        if(j > 0)
+            d_limit += distance2points(path[j], path[j-1]);
+
+        if(d_limit > MAX_LOCAL_PLAN_DISTANCE_) //max_roll_distance)
+            break;
+
+        wp = path[j];
+        double original_speed = wp.speed;
+        for(int i = 0; i < roll_outs.size(); i++)
+        {
+            double d = end_laterals[i];
+            wp.x = path[j].x - d * cos(wp.heading + M_PI_2);
+            wp.y = path[j].y - d * sin(wp.heading + M_PI_2);
+
+            if(i != central_trajectory_index)
+                wp.speed = original_speed * LANE_CHANGE_SPEED_FACTOR_;
+            else
+                wp.speed = original_speed;
+
+            roll_outs[i].push_back(wp);
+        }
+    }
+
+    for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
+    {
+        smoothPath(roll_outs[i]);
+        calculateAngleAndCost(roll_outs[i]);
+    }
+
+    visualizeRollOuts(roll_outs);
 }
 
-// void PlannerH::GenerateRunoffTrajectory(const std::vector<std::vector<WayPoint> >& referencePaths,const WayPoint& carPos, const bool& bEnableLaneChange, const double& speed, const double& microPlanDistance,
-//     const double& maxSpeed,const double& minSpeed, const double&  carTipMargin, const double& rollInMargin,
-//     const double& rollInSpeedFactor, const double& pathDensity, const double& rollOutDensity,
-//     const int& rollOutNumber, const double& SmoothDataWeight, const double& SmoothWeight,
-//     const double& SmoothTolerance, const double& speedProfileFactor, const bool& bHeadingSmooth,
-//     const int& iCurrGlobalPath, const int& iCurrLocalTraj,
-//     std::vector<std::vector<std::vector<WayPoint> > >& rollOutsPaths,
-//     std::vector<WayPoint>& sampledPoints_debug)
-// {
+bool KarcherLocalPlannerNode::getRelativeInfo(const std::vector<Waypoint>& trajectory, int& back_index, double& perp_distance)
+{
+    if(trajectory.size() < 2) return false;
 
-//   if(referencePaths.size()==0) return;
-//   if(microPlanDistance <=0 ) return;
-//   rollOutsPaths.clear();
+    Waypoint p0, p1;
+    int front_index;
+    if(trajectory.size() == 2)
+    {
+        p0 = trajectory[0];
+        p1.x = (trajectory[0].x+trajectory[1].x)/2.0;
+        p1.y = (trajectory[0].y+trajectory[1].y)/2.0;
+        p1.heading = trajectory[0].heading;
+        front_index = 1;
+        back_index = 0;
+    }
+    else
+    {
+        front_index = getClosestNextWaypointIndex(trajectory);
 
-//   sampledPoints_debug.clear(); //for visualization only
+        if(front_index > 0)
+            back_index = front_index - 1;
+        else
+            back_index = 0;
 
-//   for(unsigned int i = 0; i < referencePaths.size(); i++)
-//   {
-//     std::vector<std::vector<WayPoint> > local_rollOutPaths;
-//     int s_index = 0, e_index = 0;
-//     vector<double> e_distances;
-//     if(referencePaths.at(i).size()>0)
-//     {
-//       PlanningHelpers::CalculateRollInTrajectories(carPos, speed, referencePaths.at(i), s_index, e_index, e_distances,
-//           local_rollOutPaths, microPlanDistance, maxSpeed, carTipMargin, rollInMargin,
-//           rollInSpeedFactor, pathDensity, rollOutDensity,rollOutNumber,
-//           SmoothDataWeight, SmoothWeight, SmoothTolerance, bHeadingSmooth, sampledPoints_debug);
-//     }
-//     else
-//     {
-//       for(int j=0; j< rollOutNumber+1; j++)
-//       {
-//         local_rollOutPaths.push_back(vector<WayPoint>());
-//       }
-//     }
+        if(front_index == 0)
+        {
+            p0 = trajectory[front_index];
+            p1 = trajectory[front_index+1];
+        }
+        else if(front_index > 0 && front_index < trajectory.size()-1)
+        {
+            p0 = trajectory[front_index-1];
+            p1 = trajectory[front_index];
+        }
+        else
+        {
+            p0 = trajectory[front_index-1];
+            p1.x = (p0.x+trajectory[front_index].x)/2.0;
+            p1.y = (p0.y+trajectory[front_index].y)/2.0;
+            p1.heading = p0.heading;
+        }
+    }
 
-//     rollOutsPaths.push_back(local_rollOutPaths);
-//   }
-// }
+    // Waypoint prevWP = p0;
+    // Mat3 rotationMat(-p1.heading);
+    // Mat3 translationMat(-current_state.x, -current_state.y);
+    // Mat3 invRotationMat(p1.heading);
+    // Mat3 invTranslationMat(current_state.x, current_state.y);
 
-// void PlanningHelpers::CalculateRollInTrajectories(const WayPoint& carPos, const double& speed, const vector<WayPoint>& originalCenter, int& start_index,
-//     int& end_index, vector<double>& end_laterals ,
-//     vector<vector<WayPoint> >& rollInPaths, const double& max_roll_distance,
-//     const double& maxSpeed, const double&  carTipMargin, const double& rollInMargin,
-//     const double& rollInSpeedFactor, const double& pathDensity, const double& rollOutDensity,
-//     const int& rollOutNumber, const double& SmoothDataWeight, const double& SmoothWeight,
-//     const double& SmoothTolerance, const bool& bHeadingSmooth,
-//     std::vector<WayPoint>& sampledPoints)
-// {
-//   WayPoint p;
-//   double dummyd = 0;
+    p0.x = p0.x - current_state.x;
+    p0.y = p0.y - current_state.y;
+    // std::cout << "After translation: p0.x: " << p0.x << ", p0.y: " << p0.y << std::endl;
+    double x = p0.x;
+    p0.x = cos(-p1.heading)*p0.x - sin(-p1.heading)*p0.y;
+    p0.y = sin(-p1.heading)*x + cos(-p1.heading)*p0.y;
+    // std::cout << "After rotation: p0.x: " << p0.x << ", p0.y: " << p0.y << std::endl;
+    // std::cout << "p1.heading: " << p1.heading << std::endl;
+    
+    p1.x = p1.x - current_state.x;
+    p1.y = p1.y - current_state.y;
+    x = p1.x;
+    p1.x = cos(-p1.heading)*p1.x - sin(-p1.heading)*p1.y;
+    p1.y = sin(-p1.heading)*x + cos(-p1.heading)*p1.y;
 
-//   int iLimitIndex = (carTipMargin/0.3)/pathDensity;
-//   if(iLimitIndex >= originalCenter.size())
-//     iLimitIndex = originalCenter.size() - 1;
+    double m = (p1.y-p0.y)/(p1.x-p0.x);
+    perp_distance = p1.y - m*p1.x; // solve for x = 0
+    // std::cout << "m: " << m << std::endl;
 
-//   //Get Closest Index
-//   RelativeInfo info;
-//   GetRelativeInfo(originalCenter, carPos, info);
-//   double remaining_distance = 0;
-//   int close_index = info.iBack;
-//   for(unsigned int i=close_index; i< originalCenter.size()-1; i++)
-//     {
-//     if(i>0)
-//       remaining_distance += distance2points(originalCenter[i].pos, originalCenter[i+1].pos);
-//     }
+    if(std::isnan(perp_distance) || std::isinf(perp_distance)) perp_distance = 0;
 
-//   double initial_roll_in_distance = info.perp_distance ; //GetPerpDistanceToTrajectorySimple(originalCenter, carPos, close_index);
+    // info.to_front_distance = fabs(p1.pos.x); // distance on the x axes
 
+    // info.perp_point = p1;
+    // info.perp_point.pos.x = 0; // on the same y axis of the car
+    // info.perp_point.pos.y = info.perp_distance; //perp distance between the car and the trajectory
 
-//   vector<WayPoint> RollOutStratPath;
-//   ///***   Smoothing From Car Heading Section ***///
-// //  if(bHeadingSmooth)
-// //  {
-// //    unsigned int num_of_strait_points = carTipMargin / pathDensity;
-// //    int closest_for_each_iteration = 0;
-// //    WayPoint np = GetPerpendicularOnTrajectory_obsolete(originalCenter, carPos, dummyd, closest_for_each_iteration);
-// //    np.pos = carPos.pos;
-// //
-// //    RollOutStratPath.push_back(np);
-// //    for(unsigned int i = 0; i < num_of_strait_points; i++)
-// //    {
-// //      p = RollOutStratPath.at(i);
-// //      p.pos.x = p.pos.x +  pathDensity*cos(p.pos.a);
-// //      p.pos.y = p.pos.y +  pathDensity*sin(p.pos.a);
-// //      np = GetPerpendicularOnTrajectory_obsolete(originalCenter, p, dummyd, closest_for_each_iteration);
-// //      np.pos = p.pos;
-// //      RollOutStratPath.push_back(np);
-// //    }
-// //
-// //    initial_roll_in_distance = GetPerpDistanceToTrajectorySimple_obsolete(originalCenter, RollOutStratPath.at(RollOutStratPath.size()-1), close_index);
-// //  }
-//   ///***   -------------------------------- ***///
+    // info.perp_point.pos = invRotationMat  * info.perp_point.pos;
+    // info.perp_point.pos = invTranslationMat  * info.perp_point.pos;
 
+    // info.from_back_distance = hypot(info.perp_point.pos.y - prevWP.pos.y, info.perp_point.pos.x - prevWP.pos.x);
 
-//   //printf("\n Lateral Distance: %f" , initial_roll_in_distance);
+    // info.angle_diff = UtilityH::AngleBetweenTwoAnglesPositive(p1.pos.a, p.pos.a)*RAD2DEG;
 
-//   //calculate the starting index
-//   double d_limit = 0;
-//   unsigned int far_index = close_index;
-
-//   //calculate end index
-//   double start_distance = rollInSpeedFactor*speed+rollInMargin;
-//   if(start_distance > remaining_distance)
-//     start_distance = remaining_distance;
-
-//   d_limit = 0;
-//   for(unsigned int i=close_index; i< originalCenter.size(); i++)
-//     {
-//       if(i>0)
-//         d_limit += distance2points(originalCenter[i].pos, originalCenter[i-1].pos);
-
-//       if(d_limit >= start_distance)
-//       {
-//         far_index = i;
-//         break;
-//       }
-//     }
-
-//   int centralTrajectoryIndex = rollOutNumber/2;
-//   vector<double> end_distance_list;
-//   for(int i=0; i< rollOutNumber+1; i++)
-//     {
-//       double end_roll_in_distance = rollOutDensity*(i - centralTrajectoryIndex);
-//       end_distance_list.push_back(end_roll_in_distance);
-//     }
-
-//   start_index = close_index;
-//   end_index = far_index;
-//   end_laterals = end_distance_list;
-
-//   //calculate the actual calculation starting index
-//   d_limit = 0;
-//   unsigned int smoothing_start_index = start_index;
-//   unsigned int smoothing_end_index = end_index;
-
-//   for(unsigned int i=smoothing_start_index; i< originalCenter.size(); i++)
-//   {
-//     if(i > 0)
-//       d_limit += distance2points(originalCenter[i].pos, originalCenter[i-1].pos);
-//     if(d_limit > carTipMargin)
-//       break;
-
-//     smoothing_start_index++;
-//   }
-
-//   d_limit = 0;
-//   for(unsigned int i=end_index; i< originalCenter.size(); i++)
-//   {
-//     if(i > 0)
-//       d_limit += distance2points(originalCenter[i].pos, originalCenter[i-1].pos);
-//     if(d_limit > carTipMargin)
-//       break;
-
-//     smoothing_end_index++;
-//   }
-
-//   int nSteps = end_index - smoothing_start_index;
-
-
-//   vector<double> inc_list;
-//   rollInPaths.clear();
-//   vector<double> inc_list_inc;
-//   for(int i=0; i< rollOutNumber+1; i++)
-//   {
-//     double diff = end_laterals.at(i)-initial_roll_in_distance;
-//     inc_list.push_back(diff/(double)nSteps);
-//     rollInPaths.push_back(vector<WayPoint>());
-//     inc_list_inc.push_back(0);
-//   }
-
-
-
-//   vector<vector<WayPoint> > execluded_from_smoothing;
-//   for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//     execluded_from_smoothing.push_back(vector<WayPoint>());
-
-
-
-//   //Insert First strait points within the tip of the car range
-//   for(unsigned int j = start_index; j < smoothing_start_index; j++)
-//   {
-//     p = originalCenter.at(j);
-//     double original_speed = p.v;
-//     for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//     {
-//       p.pos.x = originalCenter.at(j).pos.x -  initial_roll_in_distance*cos(p.pos.a + M_PI_2);
-//       p.pos.y = originalCenter.at(j).pos.y -  initial_roll_in_distance*sin(p.pos.a + M_PI_2);
-//       if(i!=centralTrajectoryIndex)
-//         p.v = original_speed * LANE_CHANGE_SPEED_FACTOR;
-//       else
-//         p.v = original_speed ;
-
-//       if(j < iLimitIndex)
-//         execluded_from_smoothing.at(i).push_back(p);
-//       else
-//         rollInPaths.at(i).push_back(p);
-
-//       sampledPoints.push_back(p);
-//     }
-//   }
-
-//   for(unsigned int j = smoothing_start_index; j < end_index; j++)
-//     {
-//       p = originalCenter.at(j);
-//       double original_speed = p.v;
-//       for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//       {
-//         inc_list_inc[i] += inc_list[i];
-//         double d = inc_list_inc[i];
-//         p.pos.x = originalCenter.at(j).pos.x -  initial_roll_in_distance*cos(p.pos.a + M_PI_2) - d*cos(p.pos.a+ M_PI_2);
-//         p.pos.y = originalCenter.at(j).pos.y -  initial_roll_in_distance*sin(p.pos.a + M_PI_2) - d*sin(p.pos.a+ M_PI_2);
-//         if(i!=centralTrajectoryIndex)
-//           p.v = original_speed * LANE_CHANGE_SPEED_FACTOR;
-//         else
-//           p.v = original_speed ;
-
-//         rollInPaths.at(i).push_back(p);
-
-//         sampledPoints.push_back(p);
-//       }
-//     }
-
-//   //Insert last strait points to make better smoothing
-//   for(unsigned int j = end_index; j < smoothing_end_index; j++)
-//   {
-//     p = originalCenter.at(j);
-//     double original_speed = p.v;
-//     for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//     {
-//       double d = end_laterals.at(i);
-//       p.pos.x  = originalCenter.at(j).pos.x - d*cos(p.pos.a + M_PI_2);
-//       p.pos.y  = originalCenter.at(j).pos.y - d*sin(p.pos.a + M_PI_2);
-//       if(i!=centralTrajectoryIndex)
-//         p.v = original_speed * LANE_CHANGE_SPEED_FACTOR;
-//       else
-//         p.v = original_speed ;
-//       rollInPaths.at(i).push_back(p);
-
-//       sampledPoints.push_back(p);
-//     }
-//   }
-
-//   for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//     rollInPaths.at(i).insert(rollInPaths.at(i).begin(), execluded_from_smoothing.at(i).begin(), execluded_from_smoothing.at(i).end());
-
-//   ///***   Smoothing From Car Heading Section ***///
-// //  if(bHeadingSmooth)
-// //  {
-// //    for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-// //    {
-// //      unsigned int cut_index = GetClosestNextPointIndex(rollInPaths.at(i), RollOutStratPath.at(RollOutStratPath.size()-1));
-// //      rollInPaths.at(i).erase(rollInPaths.at(i).begin(), rollInPaths.at(i).begin()+cut_index);
-// //      rollInPaths.at(i).insert(rollInPaths.at(i).begin(), RollOutStratPath.begin(), RollOutStratPath.end());
-// //    }
-// //  }
-//   ///***   -------------------------------- ***///
-
-
-
-//   d_limit = 0;
-//   for(unsigned int j = smoothing_end_index; j < originalCenter.size(); j++)
-//     {
-//     if(j > 0)
-//       d_limit += distance2points(originalCenter.at(j).pos, originalCenter.at(j-1).pos);
-
-//     if(d_limit > max_roll_distance)
-//       break;
-
-//       p = originalCenter.at(j);
-//       double original_speed = p.v;
-//       for(unsigned int i=0; i< rollInPaths.size() ; i++)
-//       {
-//         double d = end_laterals.at(i);
-//         p.pos.x  = originalCenter.at(j).pos.x - d*cos(p.pos.a + M_PI_2);
-//         p.pos.y  = originalCenter.at(j).pos.y - d*sin(p.pos.a + M_PI_2);
-
-//         if(i!=centralTrajectoryIndex)
-//           p.v = original_speed * LANE_CHANGE_SPEED_FACTOR;
-//         else
-//           p.v = original_speed ;
-
-//         rollInPaths.at(i).push_back(p);
-
-//         sampledPoints.push_back(p);
-//       }
-//     }
-
-//   for(unsigned int i=0; i< rollOutNumber+1 ; i++)
-//   {
-//     SmoothPath(rollInPaths.at(i), SmoothDataWeight, SmoothWeight, SmoothTolerance);
-//   }
-
-// //  for(unsigned int i=0; i< rollInPaths.size(); i++)
-// //    CalcAngleAndCost(rollInPaths.at(i));
-// }
+    return true;
+}
 
 // void PlanningHelpers::PredictConstantTimeCostForTrajectory(std::vector<PlannerHNS::WayPoint>& path, const PlannerHNS::WayPoint& currPose, const double& minVelocity, const double& minDist)
 // {
