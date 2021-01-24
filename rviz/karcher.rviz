@@ -6,8 +6,9 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /Pose2
         - /MarkerArray1
+        - /MarkerArray2
+        - /Marker1
       Splitter Ratio: 0.5
     Tree Height: 728
   - Class: rviz/Selection
@@ -145,7 +146,23 @@ Visualization Manager:
       Marker Topic: /roll_outs_rviz
       Name: MarkerArray
       Namespaces:
+        local_roll_outs_marker: true
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: false
+      Marker Topic: /weighted_trajectories_rviz
+      Name: MarkerArray
+      Namespaces:
         {}
+      Queue Size: 100
+      Value: false
+    - Class: rviz/Marker
+      Enabled: true
+      Marker Topic: /safety_box_rviz
+      Name: Marker
+      Namespaces:
+        safety_box_rviz: true
       Queue Size: 100
       Value: true
   Enabled: true
@@ -185,11 +202,11 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Scale: 138.91619873046875
+      Scale: 54.35427474975586
       Target Frame: <Fixed Frame>
       Value: TopDownOrtho (rviz)
-      X: 13.155550956726074
-      Y: 19.50043487548828
+      X: 15.233268737792969
+      Y: 14.716667175292969
     Saved: ~
 Window Geometry:
   Displays:
