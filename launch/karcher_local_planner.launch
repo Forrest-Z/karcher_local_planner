@@ -10,10 +10,13 @@
         <remap from="base_scan" to="scan"/>
     </node>
 
+    <!-- ****** Obstacle Detector ****** -->
+    <include file="$(find obstacle_detector)/launch/nodes.launch" />
+
     <!-- ****** Local Planner Node ***** -->
     <node pkg="karcher_local_planner" type="karcher_local_planner" name="karcher_local_planner" output="screen">
         <param name="odom_topic"                        value="/odom" />
-        <param name="obstacle_topic"                    value="/obstacle" />
+        <param name="obstacles_topic"                    value="/obstacles" />
         <param name="global_path_topic"                 value="/global_path" />
         
         <param name="global_path_rviz_topic"            value="/global_path_rviz" />
@@ -60,7 +63,7 @@
         <param name="priority_weight"                   value="0.9" />
         <param name="transition_weight"                 value="0.9" />
         <param name="lat_weight"                        value="1.2" />
-        <param name="long_weight"                       value="1" />
+        <param name="long_weight"                       value="1.2" />
     </node>
 
     <!-- ****** Map ***** -->

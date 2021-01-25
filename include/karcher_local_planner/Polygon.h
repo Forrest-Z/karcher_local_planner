@@ -12,7 +12,7 @@ class Polygon
 public:
     std::vector<Waypoint> points;
 
-    inline int PointInsidePolygon(const Polygon& polygon,const Waypoint& p)
+    inline bool PointInsidePolygon(const Polygon& polygon,const Waypoint& p)
     {
         int counter = 0;
         int i;
@@ -45,9 +45,9 @@ public:
         }
 
         if (counter % 2 == 0)
-            return 0;
+            return false;
         else
-            return 1;
+            return true;
     }
 };
 
