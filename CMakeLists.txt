@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   tf
   std_msgs
+  obstacle_detector
 )
 
 ## System dependencies are found with CMake's conventions
