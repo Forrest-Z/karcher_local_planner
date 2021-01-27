@@ -6,7 +6,7 @@
     <param name="/use_sim_time" value="true"/>
 
     <!-- ****** Stage Simulator ****** -->
-    <node pkg="stage_ros" type="stageros" name="stageros" args="$(find karcher_local_planner)/stage/track.world">
+    <node pkg="stage_ros" type="stageros" name="stageros" args="$(find karcher_local_planner)/stage/empty.world">
         <remap from="base_scan" to="scan"/>
     </node>
 
@@ -25,29 +25,31 @@
         <param name="roll_outs_rviz_topic"              value="/roll_outs_rviz" />
         <param name="weighted_trajectories_rviz_topic"  value="/weighted_trajectories_rviz" />
         <param name="safety_box_rviz_topic"             value="/safety_box_rviz" />
+        <param name="car_footprint_rviz_topic"          value="/car_footprint_rviz" />
+        <param name="box_obstacle_rviz_topic"           value="/box_obstacle_rviz" />
         <param name="cmd_vel_topic"                     value="/cmd_vel" />
 
         <param name="planning_frequency"                value="1" />
 
         <param name="max_speed"                         value="2" />
-        <param name="max_local_plan_distance"           value="7" />
+        <param name="max_local_plan_distance"           value="12" />
         <param name="path_density"                      value="0.2" />
         <param name="roll_outs_number"                  value="8" />
         <param name="sampling_tip_margin"               value="1.2" />
         <param name="sampling_out_margin"               value="5" />
-        <param name="roll_out_density"                  value="0.2" />
+        <param name="roll_out_density"                  value="0.3" />
         <param name="roll_in_speed_factor"              value="0.2" />
-        <param name="roll_in_margin"                    value="4" />
+        <param name="roll_in_margin"                    value="6" />
         <param name="lane_change_speed_factor"          value="0.5" />
-        <param name="horizon_distance"                  value="7" />
+        <param name="horizon_distance"                  value="15" />
 
-        <param name="horizontal_safety_distance"        value="0.5" />
-        <param name="vertical_safety_distance"          value="0.5" />
+        <param name="horizontal_safety_distance"        value="0.3" />
+        <param name="vertical_safety_distance"          value="0.3" />
         <param name="max_steer_angle"                   value="0.5" />
         <param name="min_speed"                         value="0.2" />
-        <param name="lateral_skip_distance"             value="50" />
+        <param name="lateral_skip_distance"             value="10" />
 
-        <param name="min_following_distance"            value="10" />
+        <param name="min_following_distance"            value="5" />
         <param name="max_following_distance"            value="10" />
         <param name="min_distance_to_avoid"             value="8" />
 
@@ -55,6 +57,7 @@
         <param name="vehicle_length"                    value="1.8" />
         <param name="wheelbase_length"                  value="1.006" />
         <param name="turning_radius"                    value="1.5" />
+        <param name="safety_radius"                     value="1.5" />
 
         <param name="smooth_data_weight"                value="0.45" /> <!--0.45-->
         <param name="smooth_weight"                     value="0.4" /> <!--0.4-->
@@ -63,11 +66,12 @@
         <param name="priority_weight"                   value="0.9" />
         <param name="transition_weight"                 value="0.9" />
         <param name="lat_weight"                        value="1.2" />
-        <param name="long_weight"                       value="1.2" />
+        <param name="long_weight"                       value="1" />
+        <param name="collision_weight"                  value="1.2" />
     </node>
 
     <!-- ****** Map ***** -->
-    <node name="map_server" pkg="map_server" type="map_server" args="$(find karcher_local_planner)/maps/track.yaml" output="screen">
+    <node name="map_server" pkg="map_server" type="map_server" args="$(find karcher_local_planner)/maps/empty.yaml" output="screen">
         <param name="frame_id" value="map"/>
     </node> 
 

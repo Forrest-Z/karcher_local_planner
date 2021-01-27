@@ -15,6 +15,16 @@ typedef struct
     double time_cost;
 } Waypoint;
 
+typedef struct
+{
+    double x;
+    double y;
+    double heading;
+    double width;
+    double length; 
+} BoxObstacle;
+
+
 // } // namespace local_planner
 
 #endif  // KARCHER_LOCAL_PLANNER_NODE_H_
