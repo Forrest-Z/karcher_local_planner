@@ -125,9 +125,10 @@ include_directories(
 )
 
 ## Declare a C++ library
-# add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/karcher_local_planner.cpp
-# )
+#add_library(planner_helpers
+#  include/planner_helpers/visualization_helper.h
+#  include/planner_helpers/visualization_helper.cpp
+#)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -151,7 +152,7 @@ add_executable(karcher_local_planner src/karcher_local_planner_node.cpp)
 
 ## Specify libraries to link a library or executable target against
 target_link_libraries(karcher_local_planner
-  ${catkin_LIBRARIES}
+  ${catkin_LIBRARIES} 
 )
 
 #############

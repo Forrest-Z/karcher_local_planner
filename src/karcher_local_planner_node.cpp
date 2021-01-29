@@ -1,225 +1,11 @@
-#include <ros/ros.h>
-#include <ros/console.h>
-#include <tf/tf.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <nav_msgs/Odometry.h>
-#include <nav_msgs/Path.h>
-#include <geometry_msgs/PoseStamped.h>
-#include <geometry_msgs/PoseArray.h>
-#include <geometry_msgs/Twist.h>
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
-
-#include "karcher_local_planner/Waypoint.h"
-#include "karcher_local_planner/WaypointArray.h"
-
 #include "karcher_local_planner/karcher_local_planner_node.h"
-#include "karcher_local_planner/MatrixOperations.h"
-#include "karcher_local_planner/Polygon.h"
-
-#include "obstacle_detector/Obstacles.h"
-
-#include <math.h>
-#include <limits>
-#include <vector>
-
-#define _USE_MATH_DEFINES
-#define RAD2DEG 180.0 / M_PI
-#define distance2points(from , to) sqrt(pow(to.x - from.x, 2) + pow(to.y - from.y, 2))
-#define distance2pointsSqr(from , to) pow(to.x - from.x, 2) + pow(to.y - from.y, 2)
-#define pointNorm(v) sqrt(v.x*v.x + v.y*v.y)
-
-typedef struct  
-{
-    double x;
-    double y;
-    double yaw;
-    double speed;
-    double steer;
-} VehicleState;
-
-typedef struct 
-{
-    int front_index;
-    int back_index;
-    double perp_distance;
-    double to_front_distance;
-    double from_back_distance;
-    double angle_diff;
-    Waypoint perp_point;
-} RelativeInfo;
-
-typedef struct
-{
-    int index;
-    int relative_index;
-    double closest_obj_velocity;
-    double distance_from_center;
-    double priority_cost; //0 to 1
-    double transition_cost; // 0 to 1
-    double closest_obj_cost; // 0 to 1
-    double cost;
-    double closest_obj_distance;
-
-    int lane_index;
-    double lane_change_cost;
-    double lateral_cost;
-    double longitudinal_cost;
-    bool bBlocked;
-    std::vector<std::pair<int, double>> lateral_costs;
-} TrajectoryCost;
-
-typedef struct
-{
-    double x;
-    double y;
-    double vx;
-    double vy;
-    double radius;
-    double true_radius; 
-} CircleObstacle;
-
-class KarcherLocalPlannerNode
-{
-public:
-    // Constructor
-    KarcherLocalPlannerNode();
-
-    // Destructor
-    virtual ~KarcherLocalPlannerNode(){};
-
-private:
-    ros::NodeHandle nh;
-
-    // Hyperparameters
-    double planning_frequency_;
-
-    // parameters
-    double MAX_SPEED_;                  // max speed that planner should not exceed
-    double MAX_LOCAL_PLAN_DISTANCE_;    // length of local trajectory roll outs
-    double PATH_DENSITY_;               // distance between waypoints of local trajectory
-    int ROLL_OUTS_NUMBER_;              // number of roll outs not including the center tracjectory (this number should be even)
-    double SAMPLING_TIP_MARGIN_;        // length of car tip margin
-    double SAMPLING_OUT_MARGIN_;        // length of roll in margin (??)
-    double ROLL_OUT_DENSITY_;           // distance between adjacent trajectories
-    double ROLL_IN_SPEED_FACTOR_;
-    double ROLL_IN_MARGIN_;
-    double LANE_CHANGE_SPEED_FACTOR_;
-    double HORIZON_DISTANCE_;
-
-    double HORIZONTAL_SAFETY_DISTANCE_;
-    double VERTICAL_SAFETY_DISTANCE_;
-    double MAX_STEER_ANGLE_;
-    double MIN_SPEED_;
-    double LATERAL_SKIP_DISTANCE_;
-
-    double MIN_FOLLOWING_DISTANCE_;     // distance threshold for exiting following behaviour
-    double MAX_FOLLOWING_DISTANCE_;     // distance threshold for entering following behaviour
-    double MIN_DISTANCE_TO_AVOID;       // distance threshold for obstacle avoidance behaviour
-
-    double VEHICLE_WIDTH_;        
-    double VEHICLE_LENGTH_;
-    double WHEELBASE_LENGTH_;
-    double TURNING_RADIUS_;
-    double SAFETY_RADIUS_;
-    
-    // Smoothing Weights
-    double SMOOTH_DATA_WEIGHT_; 
-    double SMOOTH_WEIGHT_;
-    double SMOOTH_TOLERANCE_;
-
-    double PRIORITY_WEIGHT_;
-    double TRANSITION_WEIGHT_;
-    double LAT_WEIGHT_;
-    double LONG_WEIGHT_;
-    double COLLISION_WEIGHT_;
-
-    // Params
-    std::vector<double> PARAMS_;
-
-    // subscriber and publishers
-    ros::Subscriber odom_sub;
-    ros::Subscriber obstacles_sub;
-    ros::Subscriber global_path_sub;
-
-    ros::Publisher global_path_rviz_pub;
-    ros::Publisher extracted_path_rviz_pub;
-    ros::Publisher current_pose_rviz_pub;
-    ros::Publisher roll_outs_rviz_pub;
-    ros::Publisher weighted_trajectories_rviz_pub;
-    ros::Publisher safety_box_rviz_pub;
-    ros::Publisher car_footprint_rviz_pub;
-    ros::Publisher box_obstacle_rviz_pub;
-    ros::Publisher cmd_vel_pub;
-
-    // timer
-    ros::Timer timer;
-
-    // Variables and Functions for subscribe to odom topic
-    tf2_ros::Buffer tf_buffer;
-    tf2_ros::TransformListener tf_listener;
-
-    // Main Function 
-    void mainTimerCallback(const ros::TimerEvent& timer_event);
-
-    // Functions for subscribing
-    void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg);
-    void obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg);
-    void globalPathCallback(const karcher_local_planner::WaypointArray::ConstPtr& global_path_msg);
-
-    // Functions for publishing results
-    void visualizeGlobalPath();
-    void visualizeExtractedPath(const std::vector<Waypoint>& extracted_path);
-    void publishCmdVel();
-    void visualizeCurrentPose();
-    void visualizeRollOuts(const std::vector<std::vector<Waypoint>>& roll_outs);
-    void visualizeWeightedTrajectories(const std::vector<std::vector<Waypoint>>& paths, const std::vector<TrajectoryCost>& traj_costs, 
-                                        const int& iClosest);
-    void visualizeSafetyBox(const std::vector<Waypoint>& safety_box);
-    void visualizeCarFootprint(const std::vector<Waypoint>& car_footprint);
-    void visualizeBoxObstacle(const BoxObstacle& b);
-
-    // Local Planning functions
-    void extractGlobalPathSection(std::vector<Waypoint>& extracted_path);
-    int getClosestNextWaypointIndex(const std::vector<Waypoint>& path, const Waypoint& current_pos);
-    double angleBetweenTwoAnglesPositive(const double& a1, const double& a2);
-    double fixNegativeAngle(const double& a);
-    void fixPathDensity(std::vector<Waypoint>& path);
-    void smoothPath(std::vector<Waypoint>& path);
-    double calculateAngleAndCost(std::vector<Waypoint>& path);
-    void generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>>& roll_outs);
-    bool getRelativeInfo(const std::vector<Waypoint>& path, const Waypoint& current_pos, RelativeInfo& info);
-    void predictConstantTimeCostForTrajectory(std::vector<Waypoint>& path);
-    TrajectoryCost doOneStepStatic(const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<TrajectoryCost>& trajectory_costs);
-    void calculateTransitionCosts(std::vector<TrajectoryCost>& trajectory_costs, const int& curr_trajectory_index);
-    void calculateLateralAndLongitudinalCostsStatic(std::vector<TrajectoryCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs, 
-                                                    const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points);
-    double getExactDistanceOnTrajectory(const std::vector<Waypoint>& trajectory, const RelativeInfo& p1, const RelativeInfo& p2);
-    void normalizeCosts(std::vector<TrajectoryCost>& trajectory_costs);
-    double checkTrajectoryForCollision(const std::vector<Waypoint>& trajectory);
-
-    // Variables
-    bool b_global_path;
-    bool b_vehicle_state;
-    bool b_obstacles;
-
-    std::vector<Waypoint> global_path;
-    VehicleState current_state;
-    std::vector<CircleObstacle> circle_obstacles;
-    std::vector<Waypoint> obstacle_waypoints;
-    std::vector<BoxObstacle> box_obstacles;
-    int prev_closest_index;
-    double prev_cost;
-    Polygon safety_box;
-};
 
 // Constructor
 KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
 {
     ros::NodeHandle private_nh("~");
 
-    // topics
+    // Topics
     std::string odom_topic_;
     std::string obstacles_topic_;
     std::string global_path_topic_;
@@ -234,7 +20,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     std::string box_obstacle_rviz_topic_;
     std::string cmd_vel_topic_;
 
-    // // Parameters from launch file: topic names
+    // Parameters from launch file: topic names
     ROS_ASSERT(private_nh.getParam("odom_topic", odom_topic_));
     ROS_ASSERT(private_nh.getParam("obstacles_topic", obstacles_topic_));
     ROS_ASSERT(private_nh.getParam("global_path_topic", global_path_topic_));
@@ -344,7 +130,7 @@ void KarcherLocalPlannerNode::mainTimerCallback(const ros::TimerEvent& timer_eve
     std::vector<std::vector<Waypoint>> roll_outs;
     generateRollOuts(extracted_path, roll_outs);
 
-    std::vector<TrajectoryCost> trajectory_costs;
+    std::vector<PathCost> trajectory_costs;
     doOneStepStatic(roll_outs, extracted_path, trajectory_costs);
 }
 
@@ -383,8 +169,9 @@ void KarcherLocalPlannerNode::odomCallback(const nav_msgs::Odometry::ConstPtr& o
     current_state.x = pose_after_transform.pose.position.x;
     current_state.y = pose_after_transform.pose.position.y;
 
-    // updateVehicleFrontlinkState();
-    visualizeCurrentPose();
+    geometry_msgs::PoseStamped pose;
+    VisualizationHelpers::createCurrentPoseMarker(current_state, pose);
+    current_pose_rviz_pub.publish(pose);
 }
 
 void KarcherLocalPlannerNode::obstaclesCallback(const obstacle_detector::Obstacles::ConstPtr& obstacle_msg)
@@ -422,348 +209,11 @@ void KarcherLocalPlannerNode::obstaclesCallback(const obstacle_detector::Obstacl
         bo.width = obstacle_msg->circles[i].true_radius;            // TODO: for now, use true radius of circle obstacle as width attribute
         bo.length = obstacle_msg->circles[i].radius;                // TODO: for now, use radius of circle obstacle as length attribute
         box_obstacles.push_back(bo);
-        visualizeBoxObstacle(box_obstacles[i]);
+
+        visualization_msgs::Marker box_obstacle_marker;
+        VisualizationHelpers::createBoxObstacleMarker(box_obstacles[i], box_obstacle_marker);
+        box_obstacle_rviz_pub.publish(box_obstacle_marker);
     }
-}
-
-void KarcherLocalPlannerNode::visualizeGlobalPath()
-{
-    nav_msgs::Path path;
-    path.header.frame_id = "map";
-
-    for(unsigned int i = 0; i < global_path.size(); i++)
-    {
-        geometry_msgs::PoseStamped pose;
-        pose.header.frame_id = "map";
-        pose.pose.position.x = global_path[i].x;
-        pose.pose.position.y = global_path[i].y;
-        geometry_msgs::Quaternion pose_quat = tf::createQuaternionMsgFromYaw(global_path[i].heading);
-        pose.pose.orientation = pose_quat;
-        path.poses.push_back(pose);
-    }
-
-  global_path_rviz_pub.publish(path);
-}
-
-void KarcherLocalPlannerNode::visualizeExtractedPath(const std::vector<Waypoint>& extracted_path)
-{
-    nav_msgs::Path path;
-    path.header.frame_id = "map";
-
-    for(unsigned int i = 0; i < extracted_path.size(); i++)
-    {
-        geometry_msgs::PoseStamped pose;
-        pose.header.frame_id = "map";
-        pose.pose.position.x = extracted_path[i].x;
-        pose.pose.position.y = extracted_path[i].y;
-        geometry_msgs::Quaternion pose_quat = tf::createQuaternionMsgFromYaw(extracted_path[i].heading);
-        pose.pose.orientation = pose_quat;
-        path.poses.emplace_back(pose);
-    }
-
-  extracted_path_rviz_pub.publish(path);
-}
-
-void KarcherLocalPlannerNode::visualizeRollOuts(const std::vector<std::vector<Waypoint>>& roll_outs)
-{
-    // ROS_INFO_STREAM("Number of roll outs: " << roll_outs.size());
-    visualization_msgs::MarkerArray markerArray;
-    visualization_msgs::Marker lane_waypoint_marker;
-    lane_waypoint_marker.header.frame_id = "map";
-    lane_waypoint_marker.header.stamp = ros::Time();
-    lane_waypoint_marker.ns = "local_roll_outs_marker";
-    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
-    lane_waypoint_marker.scale.x = 0.01;
-    lane_waypoint_marker.scale.y = 0.01;
-    //lane_waypoint_marker.scale.z = 0.1;
-    lane_waypoint_marker.frame_locked = false;
-    // std_msgs::ColorRGBA  total_color, curr_color;
-
-    int count = 0;
-    for(int i = 0; i < roll_outs.size(); i++)
-    {
-        lane_waypoint_marker.points.clear();
-        lane_waypoint_marker.id = count;
-        // ROS_INFO_STREAM("Number of points in roll out " << i << ": " << roll_outs[i].size());
-
-        for(int j = 0; j < roll_outs[i].size(); j++)
-        {            
-            geometry_msgs::Point point;
-            point.x = roll_outs[i][j].x;
-            point.y = roll_outs[i][j].y;
-            point.z = 0;
-            lane_waypoint_marker.points.push_back(point);
-        }
-
-        lane_waypoint_marker.color.a = 0.9;
-        lane_waypoint_marker.color.r = 0.0;
-        lane_waypoint_marker.color.g = 0.0;
-        lane_waypoint_marker.color.b = 1.0;
-
-        markerArray.markers.push_back(lane_waypoint_marker);
-        count++;
-    }
-
-    roll_outs_rviz_pub.publish(markerArray);
-}
-
-void KarcherLocalPlannerNode::visualizeCurrentPose()
-{
-    geometry_msgs::PoseStamped pose;
-    pose.header.frame_id = "map";
-    pose.pose.position.x = current_state.x;
-    pose.pose.position.y = current_state.y;
-    geometry_msgs::Quaternion pose_quat = tf::createQuaternionMsgFromYaw(current_state.yaw);
-    pose.pose.orientation = pose_quat;
-
-    current_pose_rviz_pub.publish(pose);
-}
-
-void KarcherLocalPlannerNode::visualizeWeightedTrajectories(const std::vector<std::vector<Waypoint>>& paths, const std::vector<TrajectoryCost>& traj_costs, const int& iClosest)
-{
-    visualization_msgs::MarkerArray markerArray;
-    visualization_msgs::Marker lane_waypoint_marker;
-    lane_waypoint_marker.header.frame_id = "map";
-    lane_waypoint_marker.header.stamp = ros::Time();
-    lane_waypoint_marker.ns = "weighted_trajectories_colored";
-    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
-    lane_waypoint_marker.scale.x = 0.05;
-    lane_waypoint_marker.scale.y = 0.05;
-    //lane_waypoint_marker.scale.z = 0.1;
-    lane_waypoint_marker.color.a = 0.9;
-    lane_waypoint_marker.color.r = 1.0;
-    lane_waypoint_marker.color.g = 1.0;
-    lane_waypoint_marker.color.b = 1.0;
-    lane_waypoint_marker.frame_locked = false;
-
-    int count = 0;
-    for(int i = 0; i < paths.size(); i++)
-    {
-        lane_waypoint_marker.points.clear();
-        lane_waypoint_marker.id = count;
-
-        for(int j = 0; j < paths[i].size(); j++)
-        {
-            geometry_msgs::Point point;
-
-            point.x = paths[i][j].x;
-            point.y = paths[i][j].y;
-            // point.z = paths.at(i).at(j).pos.z;
-
-            lane_waypoint_marker.points.push_back(point);
-        }
-
-        lane_waypoint_marker.color.b = 0;
-
-        if(traj_costs.size() == paths.size())
-        {
-            float norm_cost = traj_costs[i].cost * paths.size();
-            if(norm_cost <= 1.0)
-            {
-                lane_waypoint_marker.color.r = norm_cost;
-                lane_waypoint_marker.color.g = 1.0;
-            }
-            else if(norm_cost > 1.0)
-            {
-                lane_waypoint_marker.color.r = 1.0;
-                lane_waypoint_marker.color.g = 2.0 - norm_cost;
-            }
-        }
-        else
-        {
-            std::cout << "Traj cost and paths size mismatch!" << std::endl;
-            lane_waypoint_marker.color.r = 1.0;
-            lane_waypoint_marker.color.g = 0.0;
-        }
-
-        if(traj_costs[i].bBlocked)
-        {
-            std::cout << "Path " << i << " blocked!" << std::endl;
-            lane_waypoint_marker.color.r = 1.0;
-            lane_waypoint_marker.color.g = 0.0;
-            lane_waypoint_marker.color.b = 0.0;
-        }
-
-        if(i == iClosest)
-        {
-            lane_waypoint_marker.color.r = 1.0;
-            lane_waypoint_marker.color.g = 0.0;
-            lane_waypoint_marker.color.b = 1.0;
-        }
-
-        markerArray.markers.push_back(lane_waypoint_marker);
-        count++;
-    }
-    weighted_trajectories_rviz_pub.publish(markerArray);
-}
-
-void KarcherLocalPlannerNode::visualizeSafetyBox(const std::vector<Waypoint>& safety_box)
-{
-    visualization_msgs::Marker lane_waypoint_marker;
-    lane_waypoint_marker.header.frame_id = "map";
-    lane_waypoint_marker.header.stamp = ros::Time();
-    lane_waypoint_marker.ns = "safety_box_rviz";
-    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
-    lane_waypoint_marker.scale.x = 0.05;
-    lane_waypoint_marker.scale.y = 0.05;
-    //lane_waypoint_marker.scale.z = 0.1;
-    lane_waypoint_marker.frame_locked = false;
-    lane_waypoint_marker.color.r = 0.0;
-    lane_waypoint_marker.color.g = 1.0;
-    lane_waypoint_marker.color.b = 1.0;
-    lane_waypoint_marker.color.a = 0.6;
-
-    for(int i = 0; i < safety_box.size(); i++)
-    {
-        geometry_msgs::Point p;
-        p.x = safety_box[i].x;
-        p.y = safety_box[i].y;
-        // p.z = safety_rect.at(i).z;
-
-        lane_waypoint_marker.points.push_back(p);
-    }
-
-    if(safety_box.size() > 0)
-    {
-        geometry_msgs::Point p;
-        p.x = safety_box[0].x;
-        p.y = safety_box[0].y;
-        // p.z = safety_rect.at(0).z;
-        lane_waypoint_marker.points.push_back(p);
-    }
-
-   safety_box_rviz_pub.publish(lane_waypoint_marker);
-}
-
-void KarcherLocalPlannerNode::visualizeCarFootprint(const std::vector<Waypoint>& car_footprint)
-{
-    visualization_msgs::Marker lane_waypoint_marker;
-    lane_waypoint_marker.header.frame_id = "map";
-    lane_waypoint_marker.header.stamp = ros::Time();
-    lane_waypoint_marker.ns = "car_footprint_rviz";
-    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
-    lane_waypoint_marker.scale.x = 0.05;
-    lane_waypoint_marker.scale.y = 0.05;
-    //lane_waypoint_marker.scale.z = 0.1;
-    lane_waypoint_marker.frame_locked = false;
-    lane_waypoint_marker.color.r = 0.0;
-    lane_waypoint_marker.color.g = 0.0;
-    lane_waypoint_marker.color.b = 1.0;
-    lane_waypoint_marker.color.a = 0.6;
-
-    for(int i = 0; i < car_footprint.size(); i++)
-    {
-        geometry_msgs::Point p;
-        p.x = car_footprint[i].x;
-        p.y = car_footprint[i].y;
-        // p.z = safety_rect.at(i).z;
-
-        lane_waypoint_marker.points.push_back(p);
-    }
-
-    if(car_footprint.size() > 0)
-    {
-        geometry_msgs::Point p;
-        p.x = car_footprint[0].x;
-        p.y = car_footprint[0].y;
-        // p.z = safety_rect.at(0).z;
-        lane_waypoint_marker.points.push_back(p);
-    }
-
-   car_footprint_rviz_pub.publish(lane_waypoint_marker);
-}
-
-void KarcherLocalPlannerNode::visualizeBoxObstacle(const BoxObstacle& b)
-{
-    visualization_msgs::Marker lane_waypoint_marker;
-    lane_waypoint_marker.header.frame_id = "map";
-    lane_waypoint_marker.header.stamp = ros::Time();
-    lane_waypoint_marker.ns = "box_obstacle_rviz";
-    lane_waypoint_marker.type = visualization_msgs::Marker::LINE_STRIP;
-    lane_waypoint_marker.action = visualization_msgs::Marker::ADD;
-    lane_waypoint_marker.scale.x = 0.05;
-    lane_waypoint_marker.scale.y = 0.05;
-    //lane_waypoint_marker.scale.z = 0.1;
-    lane_waypoint_marker.frame_locked = false;
-    lane_waypoint_marker.color.r = 1.0;
-    lane_waypoint_marker.color.g = 0.0;
-    lane_waypoint_marker.color.b = 0.0;
-    lane_waypoint_marker.color.a = 1.0;
-
-    // std::cout << "Box Heading: " << b.heading << std::endl;
-    // std::cout << "Rotate angle: " << b.heading-M_PI_2 << std::endl;
-    Mat3 rotationMat(b.heading-M_PI_2);
-    Mat3 translationMat(b.x, b.y);
-
-    Waypoint bottom_left;
-    bottom_left.x = -b.width/2.0;
-    bottom_left.y = -b.length/2.0;
-
-    Waypoint bottom_right; 
-    bottom_right.x = b.width/2.0;
-    bottom_right.y = -b.length/2.0;
-
-    Waypoint top_right;
-    top_right.x = b.width/2.0;
-    top_right.y = b.length/2.0;
-
-    Waypoint top_left;
-    top_left.x = -b.width/2.0;
-    top_left.y = b.length/2.0;
-
-    bottom_left = rotationMat*bottom_left;
-    bottom_left = translationMat*bottom_left;
-
-    bottom_right = rotationMat*bottom_right;
-    bottom_right = translationMat*bottom_right;
-
-    top_right = rotationMat*top_right;
-    top_right = translationMat*top_right;
-
-    top_left = rotationMat*top_left;
-    top_left = translationMat*top_left;
-
-    geometry_msgs::Point p;
-    p.x = bottom_left.x;
-    p.y = bottom_left.y;
-    lane_waypoint_marker.points.push_back(p);
-
-    p.x = bottom_right.x;
-    p.y = bottom_right.y;
-    lane_waypoint_marker.points.push_back(p);
-
-    p.x = top_right.x;
-    p.y = top_right.y;
-    lane_waypoint_marker.points.push_back(p);
-
-    p.x = top_left.x;
-    p.y = top_left.y;
-    lane_waypoint_marker.points.push_back(p);
-
-    p.x = bottom_left.x;
-    p.y = bottom_left.y;
-    lane_waypoint_marker.points.push_back(p);
-
-    box_obstacle_rviz_pub.publish(lane_waypoint_marker);
-}
-
-void KarcherLocalPlannerNode::publishCmdVel()
-{
-    geometry_msgs::Twist cmd_vel_msg;
-
-    cmd_vel_msg.linear.x = 0.5;
-    cmd_vel_msg.linear.y = 0;
-    cmd_vel_msg.linear.z = 0;
-
-    cmd_vel_msg.angular.x = 0;
-    cmd_vel_msg.angular.y = 0;
-    cmd_vel_msg.angular.z = 0;
-
-    cmd_vel_pub.publish(cmd_vel_msg);
 }
 
 void KarcherLocalPlannerNode::globalPathCallback(const karcher_local_planner::WaypointArray::ConstPtr& global_path_msg)
@@ -786,7 +236,25 @@ void KarcherLocalPlannerNode::globalPathCallback(const karcher_local_planner::Wa
         global_path.push_back(wp);
     }
 
-    visualizeGlobalPath();
+    nav_msgs::Path path;
+    // viz_helper.createGlobalPathMarker(global_path, path);
+    VisualizationHelpers::createGlobalPathMarker(global_path, path);
+    global_path_rviz_pub.publish(path);
+}
+
+void KarcherLocalPlannerNode::publishCmdVel()
+{
+    geometry_msgs::Twist cmd_vel_msg;
+
+    cmd_vel_msg.linear.x = 0.5;
+    cmd_vel_msg.linear.y = 0;
+    cmd_vel_msg.linear.z = 0;
+
+    cmd_vel_msg.angular.x = 0;
+    cmd_vel_msg.angular.y = 0;
+    cmd_vel_msg.angular.z = 0;
+
+    cmd_vel_pub.publish(cmd_vel_msg);
 }
 
 void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& extracted_path)
@@ -797,7 +265,7 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
 
     Waypoint car_pos;
     car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
-    int closest_index = getClosestNextWaypointIndex(global_path, car_pos);
+    int closest_index = PlannerHelpers::getClosestNextWaypointIndex(global_path, car_pos);
 
     if(closest_index + 1 >= global_path.size())
         closest_index = global_path.size() - 2;
@@ -834,201 +302,13 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
         return;
     }
 
-    fixPathDensity(extracted_path);
-    smoothPath(extracted_path);
-    calculateAngleAndCost(extracted_path);
-    visualizeExtractedPath(extracted_path);
-}
+    PlannerHelpers::fixPathDensity(extracted_path, PATH_DENSITY_);
+    PlannerHelpers::smoothPath(extracted_path, SMOOTH_TOLERANCE_, SMOOTH_DATA_WEIGHT_, SMOOTH_WEIGHT_);
+    PlannerHelpers::calculateAngleAndCost(extracted_path);
 
-int KarcherLocalPlannerNode::getClosestNextWaypointIndex(const std::vector<Waypoint>& path, const Waypoint& current_pos)
-{   
-    double d = 0, min_d = DBL_MAX;
-    int min_index = prev_closest_index;
-
-    for(int i = prev_closest_index; i < path.size(); i++)
-    {
-        d = distance2pointsSqr(path[i], current_pos);
-        double angle_diff = angleBetweenTwoAnglesPositive(path[i].heading, current_pos.heading)*RAD2DEG;
-
-        if(d < min_d && angle_diff < 45)
-        {
-            min_index = i;
-            min_d = d;
-        }
-    }
-
-    // ROS_INFO("Closest Global Waypoint Index = %d", min_index);
-
-    // if(min_index < int(global_path.size()-2))
-    // {
-    //     Waypoint curr, next;
-    //     curr.x = global_path[min_index].x;
-    //     curr.y = global_path[min_index].y;
-    //     next.x = global_path[min_index+1].x;
-    //     next.y = global_path[min_index+1].y;
-    //     double norm_curr = pointNorm(curr);
-    //     double norm_next = pointNorm(next);
-    //     double dot_pro = curr.x*next.x + curr.y*next.y;
-    //     double a = fixNegativeAngle(acos(dot_pro/(norm_curr*norm_next)));
-    //     if(a <= M_PI_2)
-    //         min_index = min_index + 1;
-    // }
-    return min_index;
-}
-
-double KarcherLocalPlannerNode::angleBetweenTwoAnglesPositive(const double& a1, const double& a2)
-{
-    double diff = a1 - a2;
-    if(diff < 0)
-        diff = a2 - a1;
-
-    if(diff > M_PI)
-        diff = 2.0 * M_PI - diff;
-
-    return diff;
-}
-
-double KarcherLocalPlannerNode::fixNegativeAngle(const double& a)
-{
-    double angle = 0;
-    if (a < -2.0 * M_PI || a >= 2.0 * M_PI) 
-    {
-        angle = fmod(a, 2.0 * M_PI);
-    } 
-    else 
-    {
-        angle = a;
-    }
-
-    if(angle < 0) 
-    {
-        angle = 2.0 * M_PI + angle;
-    }
-
-    return angle;
-}
-
-void KarcherLocalPlannerNode::fixPathDensity(std::vector<Waypoint> &path)
-{
-    if(path.size() == 0 || PATH_DENSITY_ == 0) return;
-
-    double d = 0, a = 0;
-    double margin = PATH_DENSITY_ * 0.01;
-    double remaining = 0;
-    int num_points = 0;
-    std::vector<Waypoint> fixed_path;
-    fixed_path.push_back(path[0]);
-    for(int start_index = 0, end_index = 1; end_index < path.size(); )
-    {
-        d += hypot(path[end_index].x - path[end_index-1].x, path[end_index].y - path[end_index-1].y) + remaining;
-        a = atan2(path[end_index].y - path[start_index].y, path[end_index].x - path[start_index].x);
-
-        if(d < PATH_DENSITY_ - margin ) // downsample
-        {
-            end_index++;
-            remaining = 0;
-        }
-        else if(d > (PATH_DENSITY_ +  margin)) // upsample
-        {
-            Waypoint new_wp = path[start_index];
-            num_points = d / PATH_DENSITY_;
-            for(int k = 0; k < num_points; k++)
-            {
-                new_wp.x = new_wp.x + PATH_DENSITY_ * cos(a);
-                new_wp.y = new_wp.y + PATH_DENSITY_ * sin(a);
-                fixed_path.push_back(new_wp);
-            }
-            remaining = d - num_points * PATH_DENSITY_;
-            start_index++;
-            path[start_index] = new_wp;
-            d = 0;
-            end_index++;
-        }
-        else
-        {
-            d = 0;
-            remaining = 0;
-            fixed_path.push_back(path[end_index]);
-            end_index++;
-            start_index = end_index - 1;
-        }
-    }
-
-    path = fixed_path;
-}
-
-void KarcherLocalPlannerNode::smoothPath(std::vector<Waypoint> &path)
-{
-  if (path.size() <= 2 ) return;
-
-  std::vector<Waypoint> smoothed_path = path;
-
-  double change = SMOOTH_TOLERANCE_;
-  double xtemp, ytemp;
-  int nIterations = 0;
-
-  while (change >= SMOOTH_TOLERANCE_)
-  {
-    change = 0.0;
-    for (int i = 1; i < path.size()-1; i++)
-    {
-        xtemp = smoothed_path[i].x;
-        ytemp = smoothed_path[i].y;
-
-        smoothed_path[i].x += SMOOTH_DATA_WEIGHT_ * (path[i].x - smoothed_path[i].x);
-        smoothed_path[i].y += SMOOTH_DATA_WEIGHT_ * (path[i].y - smoothed_path[i].y);
-
-        smoothed_path[i].x += SMOOTH_WEIGHT_ * (smoothed_path[i-1].x + smoothed_path[i+1].x - (2.0 * smoothed_path[i].x));
-        smoothed_path[i].y += SMOOTH_WEIGHT_ * (smoothed_path[i-1].y + smoothed_path[i+1].y - (2.0 * smoothed_path[i].y));
-
-        change += fabs(xtemp - smoothed_path[i].x);
-        change += fabs(ytemp - smoothed_path[i].y);
-    }
-    nIterations++;
-  }
-
-//   ROS_INFO("Number of iterations: %d", nIterations);
-
-  path = smoothed_path;
-}
-
-double KarcherLocalPlannerNode::calculateAngleAndCost(std::vector<Waypoint> &path)
-{
-    if(path.size() < 2) return 0;
-
-    if(path.size() == 2)
-    {
-        // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
-        path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
-        path[0].cost = prev_cost;
-        path[1].heading = path[0].heading;
-        path[1].cost = path[0].cost + distance2points(path[0], path[1]);
-        return path[1].cost;
-    }
-
-    // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
-    path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
-    path[0].cost = prev_cost;
-
-    for(int j = 1; j < path.size()-1; j++)
-    {
-        // path[j].heading = fixNegativeAngle(atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x));
-        path[j].heading = atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x);
-        path[j].cost = path[j-1].cost +  distance2points(path[j-1], path[j]);
-    }
-
-    int j = (int)path.size()-1;
-
-    path[j].heading = path[j-1].heading;
-    path[j].cost = path[j-1].cost + distance2points(path[j-1], path[j]);
-
-    for(int j = 0; j < path.size()-1; j++)
-    {
-        if(path[j].x == path[j+1].x && path[j].y == path[j+1].y)
-            path[j].heading = path[j+1].heading;
-    }
-
-    return path[j].cost;
+    nav_msgs::Path path;
+    VisualizationHelpers::createExtractedPathMarker(extracted_path, path);
+    extracted_path_rviz_pub.publish(path);
 }
 
 void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>>& roll_outs)
@@ -1049,7 +329,7 @@ void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path
     RelativeInfo info;
     Waypoint car_pos;
     car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
-    getRelativeInfo(path, car_pos, info);
+    PlannerHelpers::getRelativeInfo(path, car_pos, info);
     initial_roll_in_distance = info.perp_distance;
     // std::cout << "closest_index: " << closest_index << std::endl;
     // std::cout << "initial_roll_in_distance: " << initial_roll_in_distance << std::endl;
@@ -1232,136 +512,20 @@ void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path
 
     for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
     {
-        smoothPath(roll_outs[i]);
-        calculateAngleAndCost(roll_outs[i]);
-        predictConstantTimeCostForTrajectory(roll_outs[i]);
+        PlannerHelpers::smoothPath(roll_outs[i], SMOOTH_TOLERANCE_, SMOOTH_DATA_WEIGHT_, SMOOTH_WEIGHT_);
+        PlannerHelpers::calculateAngleAndCost(roll_outs[i]);
+        PlannerHelpers::predictConstantTimeCostForTrajectory(roll_outs[i], current_state);
     }
 
-    visualizeRollOuts(roll_outs);
+    visualization_msgs::MarkerArray roll_out_marker_array;
+    // viz_helper.createRollOutsMarker(roll_outs, roll_out_marker_array);
+    VisualizationHelpers::createRollOutsMarker(roll_outs, roll_out_marker_array);
+    roll_outs_rviz_pub.publish(roll_out_marker_array);
 }
 
-bool KarcherLocalPlannerNode::getRelativeInfo(const std::vector<Waypoint>& path, const Waypoint& current_pos, RelativeInfo& info)
+PathCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<PathCost>& trajectory_costs)
 {
-    if(path.size() < 2) return false;
-
-    Waypoint p0, p1;
-    if(path.size() == 2)
-    {
-        p0 = path[0];
-        p1.x = (path[0].x+path[1].x)/2.0;
-        p1.y = (path[0].y+path[1].y)/2.0;
-        p1.heading = path[0].heading;
-        info.front_index = 1;
-        info.back_index = 0;
-    }
-    else
-    {
-        info.front_index = getClosestNextWaypointIndex(path, current_pos);
-
-        if(info.front_index > 0)
-            info.back_index = info.front_index - 1;
-        else
-            info.back_index = 0;
-
-        if(info.front_index == 0)
-        {
-            p0 = path[info.front_index];
-            p1 = path[info.front_index+1];
-        }
-        else if(info.front_index > 0 && info.front_index < path.size()-1)
-        {
-            p0 = path[info.front_index-1];
-            p1 = path[info.front_index];
-        }
-        else
-        {
-            p0 = path[info.front_index-1];
-            p1.x = (p0.x+path[info.front_index].x)/2.0;
-            p1.y = (p0.y+path[info.front_index].y)/2.0;
-            p1.heading = p0.heading;
-        }
-    }
-
-    Waypoint prevWP = p0;
-    Mat3 rotationMat(-p1.heading);
-    Mat3 translationMat(-current_pos.x, -current_pos.y);
-    Mat3 invRotationMat(p1.heading);
-    Mat3 invTranslationMat(current_pos.x, current_pos.y);
-
-    p0 = translationMat*p0;
-    p0 = rotationMat*p0;
-    p1 = translationMat*p1;
-    p1 = rotationMat*p1;
-
-    // p0.x = p0.x - current_state.x;
-    // p0.y = p0.y - current_state.y;
-    // // std::cout << "After translation: p0.x: " << p0.x << ", p0.y: " << p0.y << std::endl;
-    // double x = p0.x;
-    // p0.x = cos(-p1.heading)*p0.x - sin(-p1.heading)*p0.y;
-    // p0.y = sin(-p1.heading)*x + cos(-p1.heading)*p0.y;
-    // // std::cout << "After rotation: p0.x: " << p0.x << ", p0.y: " << p0.y << std::endl;
-    // // std::cout << "p1.heading: " << p1.heading << std::endl;
-    
-    // p1.x = p1.x - current_state.x;
-    // p1.y = p1.y - current_state.y;
-    // x = p1.x;
-    // p1.x = cos(-p1.heading)*p1.x - sin(-p1.heading)*p1.y;
-    // p1.y = sin(-p1.heading)*x + cos(-p1.heading)*p1.y;
-
-    double m = (p1.y-p0.y)/(p1.x-p0.x);
-    info.perp_distance = p1.y - m*p1.x; // solve for x = 0
-    // std::cout << "m: " << m << std::endl;
-
-    if(std::isnan(info.perp_distance) || std::isinf(info.perp_distance)) info.perp_distance = 0;
-
-    info.to_front_distance = fabs(p1.x); // distance on the x axes
-
-    info.perp_point = p1;
-    info.perp_point.x = 0; // on the same y axis of the car
-    info.perp_point.y = info.perp_distance; //perp distance between the car and the trajectory
-
-    info.perp_point = invRotationMat * info.perp_point;
-    info.perp_point = invTranslationMat * info.perp_point;
-
-    info.from_back_distance = hypot(info.perp_point.y - prevWP.y, info.perp_point.x - prevWP.x);
-
-    info.angle_diff = angleBetweenTwoAnglesPositive(p1.heading, current_pos.heading)*RAD2DEG;
-
-    return true;
-}
-
-void KarcherLocalPlannerNode::predictConstantTimeCostForTrajectory(std::vector<Waypoint>& path)
-{
-    if(path.size() == 0) return;
-
-    for(int i = 0 ; i < path.size(); i++)
-        path[i].time_cost = -1;
-
-    // TODO: less than ?? (min threshold)    
-    if(current_state.speed < 0.1) return;
-
-    RelativeInfo info;
-    Waypoint car_pos;
-    car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
-    getRelativeInfo(path, car_pos, info);
-
-    double total_distance = 0;
-    double accum_time = 0;
-
-    path[info.front_index].time_cost = 0;
-    if(info.front_index == 0) info.front_index++;
-
-    for(int i = info.front_index; i < path.size(); i++)
-    {
-        total_distance += hypot(path[i].x - path[i-1].x, path[i].y - path[i-1].y);
-        accum_time = total_distance / current_state.speed;
-        path[i].time_cost = accum_time;
-    }
-}
-
-TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<TrajectoryCost>& trajectory_costs)
-{
-    TrajectoryCost bestTrajectory;
+    PathCost bestTrajectory;
     bestTrajectory.bBlocked = false;
     bestTrajectory.closest_obj_distance = HORIZON_DISTANCE_;
     bestTrajectory.closest_obj_velocity = 0;
@@ -1370,7 +534,7 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
     RelativeInfo car_info;
     Waypoint car_pos;
     car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
-    getRelativeInfo(extracted_path, car_pos, car_info);
+    PlannerHelpers::getRelativeInfo(extracted_path, car_pos, car_info);
     int curr_index = ROLL_OUTS_NUMBER_/2 + floor(car_info.perp_distance/ROLL_OUT_DENSITY_);
     //std::cout <<  "Current Index: " << curr_index << std::endl;
     if(curr_index < 0)
@@ -1381,7 +545,7 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
     trajectory_costs.clear();
     if(roll_outs.size() > 0)
     {
-        TrajectoryCost tc;
+        PathCost tc;
         int central_index = ROLL_OUTS_NUMBER_/2;
         tc.lane_index = 0;
         for(int it = 0; it < roll_outs.size(); it++)
@@ -1398,7 +562,7 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
         }
     }
 
-    calculateTransitionCosts(trajectory_costs, curr_index);
+    PlannerHelpers::calculateTransitionCosts(trajectory_costs, curr_index, ROLL_OUT_DENSITY_);
 
     // // obstacle contour points
     // Waypoint p;
@@ -1457,7 +621,7 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
 
     calculateLateralAndLongitudinalCostsStatic(trajectory_costs, roll_outs, extracted_path, contour_points);
 
-    normalizeCosts(trajectory_costs);
+    PlannerHelpers::normalizeCosts(trajectory_costs, PRIORITY_WEIGHT_, TRANSITION_WEIGHT_, LAT_WEIGHT_, LONG_WEIGHT_);
 
     int smallestIndex = -1;
     double smallestCost = DBL_MAX;
@@ -1467,7 +631,7 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
     //cout << "Trajectory Costs Log : CurrIndex: " << currIndex << " --------------------- " << endl;
     for(int ic = 0; ic < trajectory_costs.size(); ic++)
     {
-        //cout << m_TrajectoryCosts.at(ic).ToString();
+        //cout << m_PathCosts.at(ic).ToString();
         if(!trajectory_costs[ic].bBlocked && trajectory_costs[ic].cost < smallestCost)
         {
             smallestCost = trajectory_costs[ic].cost;
@@ -1495,21 +659,16 @@ TrajectoryCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::v
         bestTrajectory = trajectory_costs[smallestIndex];
     }
 
-    visualizeWeightedTrajectories(roll_outs, trajectory_costs, smallestIndex);
+    visualization_msgs::MarkerArray weighted_roll_out_marker_array;
+    // viz_helper.createWeightedRollOutsMarker(roll_outs, trajectory_costs, smallestIndex, weighted_roll_out_marker_array);
+    VisualizationHelpers::createWeightedRollOutsMarker(roll_outs, trajectory_costs, smallestIndex, weighted_roll_out_marker_array);
+    weighted_trajectories_rviz_pub.publish(weighted_roll_out_marker_array);
 
     // m_PrevIndex = currIndex;
     return bestTrajectory;
 }
 
-void KarcherLocalPlannerNode::calculateTransitionCosts(std::vector<TrajectoryCost>& trajectory_costs, const int& curr_trajectory_index)
-{
-    for(int ic = 0; ic < trajectory_costs.size(); ic++)
-    {
-        trajectory_costs[ic].transition_cost = fabs(ROLL_OUT_DENSITY_ * (ic - curr_trajectory_index));
-    }
-}
-
-void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::vector<TrajectoryCost>& trajectory_costs,
+void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::vector<PathCost>& trajectory_costs,
     const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points)
 {
     double critical_lateral_distance = VEHICLE_WIDTH_/2.0 + HORIZONTAL_SAFETY_DISTANCE_;
@@ -1558,7 +717,10 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
     car_footprint.push_back(top_left_car);
     car_footprint.push_back(bottom_left);
 
-    visualizeCarFootprint(car_footprint);
+    visualization_msgs::Marker car_footprint_marker;
+    // viz_helper.createCarFootprintMarker(car_footprint, car_footprint_marker);
+    VisualizationHelpers::createCarFootprintMarker(car_footprint, car_footprint_marker);
+    car_footprint_rviz_pub.publish(car_footprint_marker);
 
     bottom_left.x = -critical_lateral_distance;
     bottom_left.y = -critical_long_back_distance;
@@ -1604,7 +766,8 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
     top_left_car = invRotationMat*top_left_car;
     top_left_car = invTranslationMat*top_left_car;
 
-    safety_box.points.clear();
+    Polygon safety_box;
+    // safety_box.points.clear();
     safety_box.points.push_back(bottom_left);
     safety_box.points.push_back(bottom_right);
     safety_box.points.push_back(top_right_car);
@@ -1612,7 +775,10 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
     safety_box.points.push_back(top_left);
     safety_box.points.push_back(top_left_car);
 
-    visualizeSafetyBox(safety_box.points);
+    visualization_msgs::Marker safety_box_marker;
+    // viz_helper.createSafetyBoxMarker(safety_box.points, safety_box_marker);
+    VisualizationHelpers::createSafetyBoxMarker(safety_box.points, safety_box_marker);
+    safety_box_rviz_pub.publish(safety_box_marker);
 
     if(roll_outs.size() > 0 && roll_outs[0].size() > 0)
     {
@@ -1620,7 +786,7 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
         Waypoint car_pos;
         car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
         // std::cout << "Car heading: " << car_pos.heading << std::endl;
-        getRelativeInfo(extracted_path, car_pos, car_info);
+        PlannerHelpers::getRelativeInfo(extracted_path, car_pos, car_info);
 
         for(int it = 0; it < roll_outs.size(); it++)
         {
@@ -1633,8 +799,8 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
                 // std::cout << "--> Checking obstacles against roll out no: " << it << std::endl;
                 RelativeInfo obj_info;
                 contour_points[ic].heading = car_pos.heading;
-                getRelativeInfo(extracted_path, contour_points[ic], obj_info);
-                double longitudinalDist = getExactDistanceOnTrajectory(extracted_path, car_info, obj_info);
+                PlannerHelpers::getRelativeInfo(extracted_path, contour_points[ic], obj_info);
+                double longitudinalDist = PlannerHelpers::getExactDistanceOnTrajectory(extracted_path, car_info, obj_info);
                 // std::cout << "Car_info front_index: " << car_info.front_index << std::endl;
                 // std::cout << "Obj_info front_index: " << obj_info.front_index << std::endl;
                 // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
@@ -1700,10 +866,12 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
         }
     }
 
-    // // Method 2 for collsion-checking
+    // // Method 2 for collision-checking
     // for(int i = 0; i < roll_outs.size(); i++)
     // {
-    //     double closest_obs_distance = checkTrajectoryForCollision(roll_outs[i]);
+    //     double closest_obs_distance = PlannerHelpers::checkTrajectoryForCollision(roll_outs[i], circle_obstacles, box_obstacles,
+    //                                                                                     SAFETY_RADIUS_, VEHICLE_WIDTH_, VEHICLE_LENGTH_,
+    //                                                                                     WHEELBASE_LENGTH_, HORIZONTAL_SAFETY_DISTANCE_, VERTICAL_SAFETY_DISTANCE_);
     //     std::cout << "Closest obstacle distance: " << closest_obs_distance << std::endl;
     //     if(closest_obs_distance == -1) // collision
     //     {
@@ -1713,172 +881,6 @@ void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::ve
     //     }
     //     trajectory_costs[i].closest_obj_cost = 1.0/closest_obs_distance;
     // }
-}
-
-double KarcherLocalPlannerNode::getExactDistanceOnTrajectory(const std::vector<Waypoint>& trajectory, const RelativeInfo& p1, const RelativeInfo& p2)
-{
-    if(trajectory.size() == 0) return 0;
-
-    if(p2.front_index == p1.front_index && p2.back_index == p1.back_index)
-    {
-        return p2.to_front_distance - p1.to_front_distance;
-    }
-    else if(p2.back_index >= p1.front_index)
-    {
-        double d_on_path = p1.to_front_distance + p2.from_back_distance;
-        for(int i = p1.front_index; i < p2.back_index; i++)
-            d_on_path += hypot(trajectory[i+1].y - trajectory[i].y, trajectory[i+1].x - trajectory[i].x);
-
-        return d_on_path;
-    }
-    else if(p2.front_index <= p1.back_index)
-    {
-        double d_on_path = p1.from_back_distance + p2.to_front_distance;
-        for(int i = p2.front_index; i < p1.back_index; i++)
-            d_on_path += hypot(trajectory[i+1].y - trajectory[i].y, trajectory[i+1].x - trajectory[i].x);
-
-        return -d_on_path;
-    }
-
-    return 0;
-}
-
-double KarcherLocalPlannerNode::checkTrajectoryForCollision(const std::vector<Waypoint>& trajectory)
-{
-    double closest_obs_distance = DBL_MAX;
-
-    for(int it = 0; it < trajectory.size(); it++)
-    {
-        for(int io = 0; io < circle_obstacles.size(); io++)
-        {
-            // first stage of check
-            double distance = hypot(trajectory[it].x-circle_obstacles[io].x, trajectory[it].y-circle_obstacles[io].y);
-            distance = distance - SAFETY_RADIUS_ - circle_obstacles[io].radius;
-            if(distance <= 0)
-            {
-                // second stage of check
-                Mat3 rotationMat(trajectory[it].heading-M_PI_2);
-                Mat3 translationMat(trajectory[it].x, trajectory[it].y);
-
-                double critical_lateral_distance = VEHICLE_WIDTH_/2.0 + HORIZONTAL_SAFETY_DISTANCE_;
-                double critical_long_front_distance = WHEELBASE_LENGTH_/2.0 + VEHICLE_LENGTH_/2.0 + VERTICAL_SAFETY_DISTANCE_;
-                double critical_long_back_distance = VEHICLE_LENGTH_/2.0 + VERTICAL_SAFETY_DISTANCE_ - WHEELBASE_LENGTH_/2.0;
-
-                Waypoint bottom_left;
-                bottom_left.x = -critical_lateral_distance;
-                bottom_left.y = -critical_long_back_distance;
-
-                Waypoint bottom_right;
-                bottom_right.x = critical_lateral_distance;
-                bottom_right.y = -critical_long_back_distance;
-
-                Waypoint top_right;
-                top_right.x = critical_lateral_distance;
-                top_right.y = critical_long_front_distance;
-
-                Waypoint top_left;
-                top_left.x = -critical_lateral_distance;
-                top_left.y = critical_long_front_distance;
-
-                bottom_left = rotationMat*bottom_left;
-                bottom_left = translationMat*bottom_left;
-
-                top_right = rotationMat*top_right;
-                top_right = translationMat*top_right;
-
-                bottom_right = rotationMat*bottom_right;
-                bottom_right = translationMat*bottom_right;
-
-                top_left = rotationMat*top_left;
-                top_left = translationMat*top_left;
-
-                Polygon car_polygon;
-                car_polygon.points.push_back(bottom_left);
-                car_polygon.points.push_back(bottom_right);
-                car_polygon.points.push_back(top_right);
-                car_polygon.points.push_back(top_left);
-                car_polygon.points.push_back(bottom_left);
-
-                if(car_polygon.BoxInsidePolygon(car_polygon, box_obstacles[io])) return -1; // collision 
-            }
-            if(fabs(distance) < closest_obs_distance) closest_obs_distance = fabs(distance);
-        }
-    }
-    return closest_obs_distance;
-}
-
-void KarcherLocalPlannerNode::normalizeCosts(std::vector<TrajectoryCost>& trajectory_costs)
-{
-    //Normalize costs
-    double totalPriorities = 0;
-    // double totalChange = 0;
-    double totalLateralCosts = 0;
-    double totalLongitudinalCosts = 0;
-    double transitionCosts = 0;
-    // double collisionCosts = 0;
-
-    for(int ic = 0; ic < trajectory_costs.size(); ic++)
-    {
-        totalPriorities += trajectory_costs[ic].priority_cost;
-        transitionCosts += trajectory_costs[ic].transition_cost;
-        // collisionCosts += trajectory_costs[ic].closest_obj_cost;
-    }
-
-    for(int ic = 0; ic < trajectory_costs.size(); ic++)
-    {
-        // totalChange += trajectory_costs[ic].lane_change_cost;
-        totalLateralCosts += trajectory_costs[ic].lateral_cost;
-        totalLongitudinalCosts += trajectory_costs[ic].longitudinal_cost;
-    }
-
-    //  cout << "------ Normalizing Step " << endl;
-    for(int ic = 0; ic < trajectory_costs.size(); ic++)
-    {
-        if(totalPriorities != 0)
-            trajectory_costs[ic].priority_cost = trajectory_costs[ic].priority_cost / totalPriorities;
-        else
-            trajectory_costs[ic].priority_cost = 0;
-
-        if(transitionCosts != 0)
-            trajectory_costs[ic].transition_cost = trajectory_costs[ic].transition_cost / transitionCosts;
-        else
-            trajectory_costs[ic].transition_cost = 0;
-
-        // if(totalChange != 0)
-        //     trajectory_costs[ic].lane_change_cost = trajectory_costs[ic].lane_change_cost / totalChange;
-        // else
-        //     trajectory_costs[ic].lane_change_cost = 0;
-
-        if(totalLateralCosts != 0)
-            trajectory_costs[ic].lateral_cost = trajectory_costs[ic].lateral_cost / totalLateralCosts;
-        else
-            trajectory_costs[ic].lateral_cost = 0;
-
-        if(totalLongitudinalCosts != 0)
-            trajectory_costs[ic].longitudinal_cost = trajectory_costs[ic].longitudinal_cost / totalLongitudinalCosts;
-        else
-            trajectory_costs[ic].longitudinal_cost = 0;
-
-        // if(collisionCosts != 0)
-        //     trajectory_costs[ic].closest_obj_cost = trajectory_costs[ic].closest_obj_cost / collisionCosts;
-        // else
-        //     trajectory_costs[ic].closest_obj_cost = 0;
-
-        trajectory_costs[ic].cost = (PRIORITY_WEIGHT_*trajectory_costs[ic].priority_cost + TRANSITION_WEIGHT_*trajectory_costs[ic].transition_cost + LAT_WEIGHT_*trajectory_costs[ic].lateral_cost + LONG_WEIGHT_*trajectory_costs[ic].longitudinal_cost)/4.0;
-        // trajectory_costs[ic].cost = (PRIORITY_WEIGHT_*trajectory_costs[ic].priority_cost + TRANSITION_WEIGHT_*trajectory_costs[ic].transition_cost + COLLISION_WEIGHT_*trajectory_costs[ic].closest_obj_cost)/3.0;
-
-        std::cout << "Index: " << ic
-               << ", Priority: " << trajectory_costs[ic].priority_cost
-               << ", Transition: " << trajectory_costs[ic].transition_cost
-               << ", Lat: " << trajectory_costs[ic].lateral_cost
-               << ", Long: " << trajectory_costs[ic].longitudinal_cost
-            //    << ", Change: " << trajectory_costs.at(ic).lane_change_cost
-            //    << ", Collision: " << trajectory_costs[ic].closest_obj_cost
-               << ", Avg: " << trajectory_costs[ic].cost
-               << std::endl;
-    }
-
-    std::cout << "------------------------ " << std::endl;
 }
 
 int main(int argc, char** argv)

@@ -1,7 +1,7 @@
-#ifndef MATRIXOPERATIONS_H_
-#define MATRIXOPERATIONS_H_
+#ifndef MATRIX_H_
+#define MATRIX_H_
 
-#include "karcher_local_planner/karcher_local_planner_node.h"
+#include "karcher_local_planner/struct_defs.h"
 #include <math.h>
 
 // namespace local_planner {
@@ -66,4 +66,4 @@ public:
 
 // } /* namespace local_planner */
 
-#endif /* MATRIXOPERATIONS_H_ */
+#endif /* MATRIX_H_ */

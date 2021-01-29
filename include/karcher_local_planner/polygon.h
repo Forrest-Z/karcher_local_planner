@@ -1,8 +1,8 @@
 #ifndef POLYGON_H_
 #define POLYGON_H_
 
-#include "karcher_local_planner/karcher_local_planner_node.h"
-#include "karcher_local_planner/MatrixOperations.h"
+#include "karcher_local_planner/struct_defs.h"
+#include "karcher_local_planner/matrix.h"
 
 #include <vector>
 #include <boost/geometry.hpp>
