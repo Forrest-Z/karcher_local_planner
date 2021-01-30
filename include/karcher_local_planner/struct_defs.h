@@ -61,6 +61,7 @@ typedef struct
     double lane_change_cost;
     double lateral_cost;
     double longitudinal_cost;
+    double curvature_cost;
     bool bBlocked;
     std::vector<std::pair<int, double>> lateral_costs;
 } PathCost;

@@ -7,6 +7,7 @@
 #include "karcher_local_planner/struct_defs.h"
 #include "karcher_local_planner/matrix.h"
 #include "karcher_local_planner/polygon.h"
+#include "karcher_local_planner/visualization_helpers.h"
 
 #define _USE_MATH_DEFINES
 #define RAD2DEG 180.0 / M_PI
@@ -33,8 +34,17 @@ public:
                                                     const double& safety_radius, const double& vehicle_width, const double& vehicle_length, const double& wheelbase_length, 
                                                     const double& horizontal_safety_distance, const double& vertical_safety_distance);
     static void calculateTransitionCosts(std::vector<PathCost>& trajectory_costs, const int& curr_trajectory_index, const double& roll_out_density);
+    static void calculateLateralAndLongitudinalCostsStatic(std::vector<PathCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs, 
+                                                                const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points, 
+                                                                const VehicleState& current_state, visualization_msgs::Marker& car_footprint_marker, 
+                                                                visualization_msgs::Marker& safety_box_marker,
+                                                                const double& vehicle_length, const double& vehicle_width, 
+                                                                const double& wheelbase_length, const double& horizontal_safety_distance, 
+                                                                const double& vertical_safety_distance, const double& max_steer_angle,
+                                                                const double& min_following_distance, const double& lateral_skip_distance);
+    static void calculateCurvatureCosts(std::vector<PathCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs);
     static void normalizeCosts(std::vector<PathCost>& trajectory_costs, const double& priority_weight, 
-                        const double& transition_weight, const double& lat_weight, const double& long_weight);
+                        const double& transition_weight, const double& lat_weight, const double& long_weight, const double& curvature_weight);
 };
 
 #endif  /* PLANNER_HELPERS_H_ */

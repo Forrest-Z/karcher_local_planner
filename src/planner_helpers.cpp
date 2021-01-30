@@ -158,7 +158,7 @@ double PlannerHelpers::calculateAngleAndCost(std::vector<Waypoint> &path, const 
 
     if(path.size() == 2)
     {
-        path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+        // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
         path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
         path[0].cost = prev_cost;
         path[1].heading = path[0].heading;
@@ -166,13 +166,13 @@ double PlannerHelpers::calculateAngleAndCost(std::vector<Waypoint> &path, const 
         return path[1].cost;
     }
 
-    path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
+    // path[0].heading = fixNegativeAngle(atan2(path[1].y - path[0].y, path[1].x - path[0].x));
     path[0].heading = atan2(path[1].y - path[0].y, path[1].x - path[0].x);
     path[0].cost = prev_cost;
 
     for(int j = 1; j < path.size()-1; j++)
     {
-        path[j].heading = fixNegativeAngle(atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x));
+        // path[j].heading = fixNegativeAngle(atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x));
         path[j].heading = atan2(path[j+1].y - path[j].y, path[j+1].x - path[j].x);
         path[j].cost = path[j-1].cost +  distance2points(path[j-1], path[j]);
     }
@@ -397,8 +397,235 @@ void PlannerHelpers::calculateTransitionCosts(std::vector<PathCost>& trajectory_
     }
 }
 
+void PlannerHelpers::calculateLateralAndLongitudinalCostsStatic(std::vector<PathCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs, 
+                                                                const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points, 
+                                                                const VehicleState& current_state, visualization_msgs::Marker& car_footprint_marker, 
+                                                                visualization_msgs::Marker& safety_box_marker,
+                                                                const double& vehicle_length, const double& vehicle_width, 
+                                                                const double& wheelbase_length, const double& horizontal_safety_distance, 
+                                                                const double& vertical_safety_distance, const double& max_steer_angle,
+                                                                const double& min_following_distance, const double& lateral_skip_distance)
+{
+    double critical_lateral_distance = vehicle_width/2.0 + horizontal_safety_distance;
+    double critical_long_front_distance = wheelbase_length/2.0 + vehicle_length/2.0 + vertical_safety_distance;
+    double critical_long_back_distance = vehicle_length/2.0 + vertical_safety_distance - wheelbase_length/2.0;
+
+    Mat3 invRotationMat(current_state.yaw - M_PI_2);
+    Mat3 invTranslationMat(current_state.x, current_state.y);
+
+    double corner_slide_distance = critical_lateral_distance/2.0;
+    double ratio_to_angle = corner_slide_distance/max_steer_angle;
+    double slide_distance = current_state.steer * ratio_to_angle;
+
+    Waypoint bottom_left;
+    bottom_left.x = -vehicle_width/2.0;
+    bottom_left.y = -vehicle_length/2.0 + wheelbase_length/2.0;
+
+    Waypoint bottom_right;
+    bottom_right.x = vehicle_width/2.0;
+    bottom_right.y = -vehicle_length/2.0 + wheelbase_length/2.0;
+
+    Waypoint top_right_car;
+    top_right_car.x = vehicle_width/2.0;
+    top_right_car.y = wheelbase_length/2.0 + vehicle_length/2.0;
+
+    Waypoint top_left_car;
+    top_left_car.x = -vehicle_width/2.0;
+    top_left_car.y = wheelbase_length/2.0 + vehicle_length/2.0;
+
+    bottom_left = invRotationMat*bottom_left;
+    bottom_left = invTranslationMat*bottom_left;
+
+    bottom_right = invRotationMat*bottom_right;
+    bottom_right = invTranslationMat*bottom_right;
+
+    top_right_car = invRotationMat*top_right_car;
+    top_right_car = invTranslationMat*top_right_car;
+
+    top_left_car = invRotationMat*top_left_car;
+    top_left_car = invTranslationMat*top_left_car;
+
+    std::vector<Waypoint> car_footprint;
+    car_footprint.push_back(bottom_left);
+    car_footprint.push_back(bottom_right);
+    car_footprint.push_back(top_right_car);
+    car_footprint.push_back(top_left_car);
+    car_footprint.push_back(bottom_left);
+
+    VisualizationHelpers::createCarFootprintMarker(car_footprint, car_footprint_marker);
+
+    bottom_left.x = -critical_lateral_distance;
+    bottom_left.y = -critical_long_back_distance;
+    bottom_left.heading = 0;
+
+    bottom_right.x = critical_lateral_distance;
+    bottom_right.y = -critical_long_back_distance;
+    bottom_right.heading = 0;
+
+    top_right_car.x = critical_lateral_distance;
+    top_right_car.y = wheelbase_length/3.0 + vehicle_length/3.0;
+    top_right_car.heading = 0;
+
+    top_left_car.x = -critical_lateral_distance;
+    top_left_car.y = wheelbase_length/3.0 + vehicle_length/3.0;
+    top_left_car.heading = 0;
+
+    Waypoint top_right;
+    top_right.x = critical_lateral_distance - slide_distance;
+    top_right.y = critical_long_front_distance;
+    top_right.heading = 0;
+
+    Waypoint top_left;
+    top_left.x = -critical_lateral_distance - slide_distance;
+    top_left.y = critical_long_front_distance;
+    top_left.heading = 0;
+
+    bottom_left = invRotationMat*bottom_left;
+    bottom_left = invTranslationMat*bottom_left;
+
+    top_right = invRotationMat*top_right;
+    top_right = invTranslationMat*top_right;
+
+    bottom_right = invRotationMat*bottom_right;
+    bottom_right = invTranslationMat*bottom_right;
+
+    top_left = invRotationMat*top_left;
+    top_left = invTranslationMat*top_left;
+
+    top_right_car = invRotationMat*top_right_car;
+    top_right_car = invTranslationMat*top_right_car;
+
+    top_left_car = invRotationMat*top_left_car;
+    top_left_car = invTranslationMat*top_left_car;
+
+    Polygon safety_box;
+    safety_box.points.push_back(bottom_left);
+    safety_box.points.push_back(bottom_right);
+    safety_box.points.push_back(top_right_car);
+    safety_box.points.push_back(top_right);
+    safety_box.points.push_back(top_left);
+    safety_box.points.push_back(top_left_car);
+
+    VisualizationHelpers::createSafetyBoxMarker(safety_box.points, safety_box_marker);
+
+    if(roll_outs.size() > 0 && roll_outs[0].size() > 0)
+    {
+        RelativeInfo car_info;
+        Waypoint car_pos;
+        car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
+        // std::cout << "Car heading: " << car_pos.heading << std::endl;
+        getRelativeInfo(extracted_path, car_pos, car_info);
+
+        for(int it = 0; it < roll_outs.size(); it++)
+        {
+            trajectory_costs[it].lateral_cost = 0;
+            trajectory_costs[it].longitudinal_cost = 0;
+            // int skip_id = -1;
+            for(int ic = 0; ic < contour_points.size(); ic++)
+            {
+            //    if(skip_id == contour_points[icon].id) continue;
+                // std::cout << "--> Checking obstacles against roll out no: " << it << std::endl;
+                RelativeInfo obj_info;
+                contour_points[ic].heading = car_pos.heading;
+                getRelativeInfo(extracted_path, contour_points[ic], obj_info);
+                double longitudinalDist = getExactDistanceOnTrajectory(extracted_path, car_info, obj_info);
+                // std::cout << "Car_info front_index: " << car_info.front_index << std::endl;
+                // std::cout << "Obj_info front_index: " << obj_info.front_index << std::endl;
+                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
+                if(obj_info.front_index == 0 && longitudinalDist > 0)
+                    longitudinalDist = -longitudinalDist;
+                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
+
+                // double direct_distance = hypot(obj_info.perp_point.y-obstacle_waypoints[io].y, obj_info.perp_point.x-obstacle_waypoints[io].x);
+                // if(contour_points[icon].v < MIN_SPEED_ && direct_distance > (LATERAL_SKIP_DISTANCE_+contour_points[icon].cost))
+                // {
+                //     skip_id = contour_points[icon].id;
+                //     continue;
+                // }
+
+                // double close_in_percentage = 1;
+                // close_in_percentage = ((longitudinalDist- critical_long_front_distance)/params.rollInMargin)*4.0;
+    
+                // if(close_in_percentage <= 0 || close_in_percentage > 1) close_in_percentage = 1;
+
+                double distance_from_center = trajectory_costs[it].distance_from_center;
+
+                // if(close_in_percentage < 1)
+                //     distance_from_center = distance_from_center - distance_from_center * (1.0 - close_in_percentage);
+
+                double lateralDist = fabs(obj_info.perp_distance - distance_from_center);
+                // std::cout << "Lateral distance: " << lateralDist << std::endl;
+
+                longitudinalDist = longitudinalDist - critical_long_front_distance;
+                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
+
+                if(longitudinalDist < -vehicle_length || longitudinalDist > min_following_distance|| lateralDist > lateral_skip_distance)
+                {
+                    continue;
+                }
+
+                if(safety_box.PointInsidePolygon(safety_box, contour_points[ic]) == true)
+                {
+                    std::cout << "Point inside polygon!!" << std::endl;
+                    trajectory_costs[it].bBlocked = true;
+                }
+
+                
+                if(lateralDist <= critical_lateral_distance && longitudinalDist >= -vehicle_length/1.5 && longitudinalDist <= min_following_distance)
+                {
+                    // std::cout << "lateralDist: " << lateralDist << std::endl;
+                    // std::cout << "Critical lateral distance: " << critical_lateral_distance << std::endl;
+                    // std::cout << "longitudinalDist: " << longitudinalDist << std::endl;
+                    trajectory_costs[it].bBlocked = true;
+                }   
+
+                if(lateralDist != 0)
+                    trajectory_costs[it].lateral_cost += 1.0/lateralDist;
+
+                if(longitudinalDist != 0)
+                    trajectory_costs[it].longitudinal_cost += 1.0/fabs(longitudinalDist);
+
+                if(longitudinalDist >= -critical_long_front_distance && longitudinalDist < trajectory_costs[it].closest_obj_distance)
+                {
+                    trajectory_costs[it].closest_obj_distance = longitudinalDist;
+                    trajectory_costs[it].closest_obj_velocity = 0; // TODO: obstacle_waypoints[io].v;
+                }
+            }
+        }
+    }
+
+    // // Method 2 for collision-checking
+    // for(int i = 0; i < roll_outs.size(); i++)
+    // {
+    //     double closest_obs_distance = PlannerHelpers::checkTrajectoryForCollision(roll_outs[i], circle_obstacles, box_obstacles,
+    //                                                                                     SAFETY_RADIUS_, VEHICLE_WIDTH_, VEHICLE_LENGTH_,
+    //                                                                                     WHEELBASE_LENGTH_, HORIZONTAL_SAFETY_DISTANCE_, VERTICAL_SAFETY_DISTANCE_);
+    //     std::cout << "Closest obstacle distance: " << closest_obs_distance << std::endl;
+    //     if(closest_obs_distance == -1) // collision
+    //     {
+    //         trajectory_costs[i].bBlocked = true;
+    //         trajectory_costs[i].closest_obj_cost = 1.0/0.001;
+    //         continue;
+    //     }
+    //     trajectory_costs[i].closest_obj_cost = 1.0/closest_obs_distance;
+    // }
+}
+
+void PlannerHelpers::calculateCurvatureCosts(std::vector<PathCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs)
+{
+    for(int i = 0; i < roll_outs.size(); i++)
+    {
+        trajectory_costs[i].curvature_cost = 0;
+
+        for(int j = 0; j < roll_outs[i].size()-1; j++)
+        {
+            trajectory_costs[i].curvature_cost += fabs(roll_outs[i][j+1].heading - roll_outs[i][j].heading);
+        }
+    }
+}
+
 void PlannerHelpers::normalizeCosts(std::vector<PathCost>& trajectory_costs, const double& priority_weight, 
-                                    const double& transition_weight, const double& lat_weight, const double& long_weight)
+                                    const double& transition_weight, const double& lat_weight, const double& long_weight, const double& curvature_weight)
 {
     // Normalize costs
     double totalPriorities = 0;
@@ -406,6 +633,7 @@ void PlannerHelpers::normalizeCosts(std::vector<PathCost>& trajectory_costs, con
     double totalLateralCosts = 0;
     double totalLongitudinalCosts = 0;
     double transitionCosts = 0;
+    double totalCurvatureCosts = 0;
     // double collisionCosts = 0;
 
     for(int ic = 0; ic < trajectory_costs.size(); ic++)
@@ -420,6 +648,7 @@ void PlannerHelpers::normalizeCosts(std::vector<PathCost>& trajectory_costs, con
         // totalChange += trajectory_costs[ic].lane_change_cost;
         totalLateralCosts += trajectory_costs[ic].lateral_cost;
         totalLongitudinalCosts += trajectory_costs[ic].longitudinal_cost;
+        totalCurvatureCosts += trajectory_costs[ic].curvature_cost;
     }
 
     //  cout << "------ Normalizing Step " << endl;
@@ -455,7 +684,15 @@ void PlannerHelpers::normalizeCosts(std::vector<PathCost>& trajectory_costs, con
         // else
         //     trajectory_costs[ic].closest_obj_cost = 0;
 
-        trajectory_costs[ic].cost = (priority_weight*trajectory_costs[ic].priority_cost + transition_weight*trajectory_costs[ic].transition_cost + lat_weight*trajectory_costs[ic].lateral_cost + long_weight*trajectory_costs[ic].longitudinal_cost)/4.0;
+        if(totalCurvatureCosts != 0)
+            trajectory_costs[ic].curvature_cost = trajectory_costs[ic].curvature_cost / totalCurvatureCosts;
+        else
+            trajectory_costs[ic].curvature_cost = 0;
+
+        trajectory_costs[ic].cost = (priority_weight*trajectory_costs[ic].priority_cost + transition_weight*trajectory_costs[ic].transition_cost
+                                    + lat_weight*trajectory_costs[ic].lateral_cost + long_weight*trajectory_costs[ic].longitudinal_cost
+                                    + curvature_weight*trajectory_costs[ic].curvature_cost) / 
+                                    (priority_weight + transition_weight + lat_weight + long_weight + curvature_weight);
         // trajectory_costs[ic].cost = (PRIORITY_WEIGHT_*trajectory_costs[ic].priority_cost + TRANSITION_WEIGHT_*trajectory_costs[ic].transition_cost + COLLISION_WEIGHT_*trajectory_costs[ic].closest_obj_cost)/3.0;
 
         std::cout << "Index: " << ic
@@ -465,6 +702,7 @@ void PlannerHelpers::normalizeCosts(std::vector<PathCost>& trajectory_costs, con
                << ", Long: " << trajectory_costs[ic].longitudinal_cost
             //    << ", Change: " << trajectory_costs.at(ic).lane_change_cost
             //    << ", Collision: " << trajectory_costs[ic].closest_obj_cost
+               << ", Curvature: " << trajectory_costs[ic].curvature_cost
                << ", Avg: " << trajectory_costs[ic].cost
                << std::endl;
     }

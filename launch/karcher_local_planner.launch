@@ -33,7 +33,7 @@
 
         <param name="max_speed"                         value="2" />
         <param name="max_local_plan_distance"           value="12" />
-        <param name="path_density"                      value="0.2" />
+        <param name="path_density"                      value="0.3" />
         <param name="roll_outs_number"                  value="8" />
         <param name="sampling_tip_margin"               value="1.2" />
         <param name="sampling_out_margin"               value="5" />
@@ -65,9 +65,10 @@
 
         <param name="priority_weight"                   value="0.9" />
         <param name="transition_weight"                 value="0.9" />
-        <param name="lat_weight"                        value="1.2" />
+        <param name="lat_weight"                        value="1.5" />
         <param name="long_weight"                       value="1" />
-        <param name="collision_weight"                  value="1.2" />
+        <param name="collision_weight"                  value="2" />
+        <param name="curvature_weight"                  value="1.2" />
     </node>
 
     <!-- ****** Map ***** -->

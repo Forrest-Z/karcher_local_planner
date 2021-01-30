@@ -77,6 +77,7 @@ KarcherLocalPlannerNode::KarcherLocalPlannerNode() : tf_listener(tf_buffer)
     ROS_ASSERT(private_nh.getParam("lat_weight", LAT_WEIGHT_));
     ROS_ASSERT(private_nh.getParam("long_weight", LONG_WEIGHT_));
     ROS_ASSERT(private_nh.getParam("collision_weight", COLLISION_WEIGHT_));
+    ROS_ASSERT(private_nh.getParam("curvature_weight", CURVATURE_WEIGHT_));
 
     // Subscribe & Advertise
     odom_sub = nh.subscribe(odom_topic_, 1, &KarcherLocalPlannerNode::odomCallback, this);
@@ -566,7 +567,7 @@ PathCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<
 
     // // obstacle contour points
     // Waypoint p;
-    std::vector<Waypoint> contour_points;
+    // std::vector<Waypoint> contour_points;
     // // m_AllContourPoints.clear();
     // for(int io = 0; io < obj_list.size(); io++)
     // {
@@ -580,6 +581,7 @@ PathCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<
     //     }
     // }
 
+    std::vector<Waypoint> contour_points;
     for(int io = 0; io < box_obstacles.size(); io++)
     {
         Mat3 rotationMat(box_obstacles[io].heading-M_PI_2);
@@ -619,9 +621,20 @@ PathCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<
         contour_points.push_back(top_left);
     }
 
-    calculateLateralAndLongitudinalCostsStatic(trajectory_costs, roll_outs, extracted_path, contour_points);
+    visualization_msgs::Marker car_footprint_marker, safety_box_marker;
+    PlannerHelpers::calculateLateralAndLongitudinalCostsStatic(trajectory_costs, roll_outs, extracted_path, contour_points, 
+                                                                current_state, car_footprint_marker, safety_box_marker,
+                                                                VEHICLE_LENGTH_, VEHICLE_WIDTH_, 
+                                                                WHEELBASE_LENGTH_, HORIZONTAL_SAFETY_DISTANCE_, 
+                                                                VERTICAL_SAFETY_DISTANCE_, MAX_STEER_ANGLE_,
+                                                                MIN_FOLLOWING_DISTANCE_, LATERAL_SKIP_DISTANCE_);
 
-    PlannerHelpers::normalizeCosts(trajectory_costs, PRIORITY_WEIGHT_, TRANSITION_WEIGHT_, LAT_WEIGHT_, LONG_WEIGHT_);
+    car_footprint_rviz_pub.publish(car_footprint_marker);
+    safety_box_rviz_pub.publish(safety_box_marker);
+
+    PlannerHelpers::calculateCurvatureCosts(trajectory_costs, roll_outs);
+
+    PlannerHelpers::normalizeCosts(trajectory_costs, PRIORITY_WEIGHT_, TRANSITION_WEIGHT_, LAT_WEIGHT_, LONG_WEIGHT_, CURVATURE_WEIGHT_);
 
     int smallestIndex = -1;
     double smallestCost = DBL_MAX;
@@ -666,221 +679,6 @@ PathCost KarcherLocalPlannerNode::doOneStepStatic(const std::vector<std::vector<
 
     // m_PrevIndex = currIndex;
     return bestTrajectory;
-}
-
-void KarcherLocalPlannerNode::calculateLateralAndLongitudinalCostsStatic(std::vector<PathCost>& trajectory_costs,
-    const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points)
-{
-    double critical_lateral_distance = VEHICLE_WIDTH_/2.0 + HORIZONTAL_SAFETY_DISTANCE_;
-    double critical_long_front_distance = WHEELBASE_LENGTH_/2.0 + VEHICLE_LENGTH_/2.0 + VERTICAL_SAFETY_DISTANCE_;
-    double critical_long_back_distance = VEHICLE_LENGTH_/2.0 + VERTICAL_SAFETY_DISTANCE_ - WHEELBASE_LENGTH_/2.0;
-
-    Mat3 invRotationMat(current_state.yaw - M_PI_2);
-    Mat3 invTranslationMat(current_state.x, current_state.y);
-
-    double corner_slide_distance = critical_lateral_distance/2.0;
-    double ratio_to_angle = corner_slide_distance/MAX_STEER_ANGLE_;
-    double slide_distance = current_state.steer * ratio_to_angle;
-
-    Waypoint bottom_left;
-    bottom_left.x = -VEHICLE_WIDTH_/2.0;
-    bottom_left.y = -VEHICLE_LENGTH_/2.0 + WHEELBASE_LENGTH_/2.0;
-
-    Waypoint bottom_right;
-    bottom_right.x = VEHICLE_WIDTH_/2.0;
-    bottom_right.y = -VEHICLE_LENGTH_/2.0 + WHEELBASE_LENGTH_/2.0;
-
-    Waypoint top_right_car;
-    top_right_car.x = VEHICLE_WIDTH_/2.0;
-    top_right_car.y = WHEELBASE_LENGTH_/2.0 + VEHICLE_LENGTH_/2.0;
-
-    Waypoint top_left_car;
-    top_left_car.x = -VEHICLE_WIDTH_/2.0;
-    top_left_car.y = WHEELBASE_LENGTH_/2.0 + VEHICLE_LENGTH_/2.0;
-
-    bottom_left = invRotationMat*bottom_left;
-    bottom_left = invTranslationMat*bottom_left;
-
-    bottom_right = invRotationMat*bottom_right;
-    bottom_right = invTranslationMat*bottom_right;
-
-    top_right_car = invRotationMat*top_right_car;
-    top_right_car = invTranslationMat*top_right_car;
-
-    top_left_car = invRotationMat*top_left_car;
-    top_left_car = invTranslationMat*top_left_car;
-
-    std::vector<Waypoint> car_footprint;
-    car_footprint.push_back(bottom_left);
-    car_footprint.push_back(bottom_right);
-    car_footprint.push_back(top_right_car);
-    car_footprint.push_back(top_left_car);
-    car_footprint.push_back(bottom_left);
-
-    visualization_msgs::Marker car_footprint_marker;
-    // viz_helper.createCarFootprintMarker(car_footprint, car_footprint_marker);
-    VisualizationHelpers::createCarFootprintMarker(car_footprint, car_footprint_marker);
-    car_footprint_rviz_pub.publish(car_footprint_marker);
-
-    bottom_left.x = -critical_lateral_distance;
-    bottom_left.y = -critical_long_back_distance;
-    bottom_left.heading = 0;
-
-    bottom_right.x = critical_lateral_distance;
-    bottom_right.y = -critical_long_back_distance;
-    bottom_right.heading = 0;
-
-    top_right_car.x = critical_lateral_distance;
-    top_right_car.y = WHEELBASE_LENGTH_/3.0 + VEHICLE_LENGTH_/3.0;
-    top_right_car.heading = 0;
-
-    top_left_car.x = -critical_lateral_distance;
-    top_left_car.y = WHEELBASE_LENGTH_/3.0 + VEHICLE_LENGTH_/3.0;
-    top_left_car.heading = 0;
-
-    Waypoint top_right;
-    top_right.x = critical_lateral_distance - slide_distance;
-    top_right.y = critical_long_front_distance;
-    top_right.heading = 0;
-
-    Waypoint top_left;
-    top_left.x = -critical_lateral_distance - slide_distance;
-    top_left.y = critical_long_front_distance;
-    top_left.heading = 0;
-
-    bottom_left = invRotationMat*bottom_left;
-    bottom_left = invTranslationMat*bottom_left;
-
-    top_right = invRotationMat*top_right;
-    top_right = invTranslationMat*top_right;
-
-    bottom_right = invRotationMat*bottom_right;
-    bottom_right = invTranslationMat*bottom_right;
-
-    top_left = invRotationMat*top_left;
-    top_left = invTranslationMat*top_left;
-
-    top_right_car = invRotationMat*top_right_car;
-    top_right_car = invTranslationMat*top_right_car;
-
-    top_left_car = invRotationMat*top_left_car;
-    top_left_car = invTranslationMat*top_left_car;
-
-    Polygon safety_box;
-    // safety_box.points.clear();
-    safety_box.points.push_back(bottom_left);
-    safety_box.points.push_back(bottom_right);
-    safety_box.points.push_back(top_right_car);
-    safety_box.points.push_back(top_right);
-    safety_box.points.push_back(top_left);
-    safety_box.points.push_back(top_left_car);
-
-    visualization_msgs::Marker safety_box_marker;
-    // viz_helper.createSafetyBoxMarker(safety_box.points, safety_box_marker);
-    VisualizationHelpers::createSafetyBoxMarker(safety_box.points, safety_box_marker);
-    safety_box_rviz_pub.publish(safety_box_marker);
-
-    if(roll_outs.size() > 0 && roll_outs[0].size() > 0)
-    {
-        RelativeInfo car_info;
-        Waypoint car_pos;
-        car_pos.x = current_state.x; car_pos.y = current_state.y; car_pos.heading = current_state.yaw;
-        // std::cout << "Car heading: " << car_pos.heading << std::endl;
-        PlannerHelpers::getRelativeInfo(extracted_path, car_pos, car_info);
-
-        for(int it = 0; it < roll_outs.size(); it++)
-        {
-            trajectory_costs[it].lateral_cost = 0;
-            trajectory_costs[it].longitudinal_cost = 0;
-            // int skip_id = -1;
-            for(int ic = 0; ic < contour_points.size(); ic++)
-            {
-            //    if(skip_id == contour_points[icon].id) continue;
-                // std::cout << "--> Checking obstacles against roll out no: " << it << std::endl;
-                RelativeInfo obj_info;
-                contour_points[ic].heading = car_pos.heading;
-                PlannerHelpers::getRelativeInfo(extracted_path, contour_points[ic], obj_info);
-                double longitudinalDist = PlannerHelpers::getExactDistanceOnTrajectory(extracted_path, car_info, obj_info);
-                // std::cout << "Car_info front_index: " << car_info.front_index << std::endl;
-                // std::cout << "Obj_info front_index: " << obj_info.front_index << std::endl;
-                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
-                if(obj_info.front_index == 0 && longitudinalDist > 0)
-                    longitudinalDist = -longitudinalDist;
-                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
-
-                // double direct_distance = hypot(obj_info.perp_point.y-obstacle_waypoints[io].y, obj_info.perp_point.x-obstacle_waypoints[io].x);
-                // if(contour_points[icon].v < MIN_SPEED_ && direct_distance > (LATERAL_SKIP_DISTANCE_+contour_points[icon].cost))
-                // {
-                //     skip_id = contour_points[icon].id;
-                //     continue;
-                // }
-
-                // double close_in_percentage = 1;
-                // close_in_percentage = ((longitudinalDist- critical_long_front_distance)/params.rollInMargin)*4.0;
-    
-                // if(close_in_percentage <= 0 || close_in_percentage > 1) close_in_percentage = 1;
-
-                double distance_from_center = trajectory_costs[it].distance_from_center;
-
-                // if(close_in_percentage < 1)
-                //     distance_from_center = distance_from_center - distance_from_center * (1.0 - close_in_percentage);
-
-                double lateralDist = fabs(obj_info.perp_distance - distance_from_center);
-                // std::cout << "Lateral distance: " << lateralDist << std::endl;
-
-                longitudinalDist = longitudinalDist - critical_long_front_distance;
-                // std::cout << "Longitudinal distance: " << longitudinalDist << std::endl;
-
-                if(longitudinalDist < -VEHICLE_LENGTH_ || longitudinalDist > MIN_FOLLOWING_DISTANCE_|| lateralDist > LATERAL_SKIP_DISTANCE_)
-                {
-                    continue;
-                }
-
-                if(safety_box.PointInsidePolygon(safety_box, contour_points[ic]) == true)
-                {
-                    std::cout << "Point inside polygon!!" << std::endl;
-                    trajectory_costs[it].bBlocked = true;
-                }
-
-                
-                if(lateralDist <= critical_lateral_distance && longitudinalDist >= -VEHICLE_LENGTH_/1.5 && longitudinalDist <= MIN_FOLLOWING_DISTANCE_)
-                {
-                    // std::cout << "lateralDist: " << lateralDist << std::endl;
-                    // std::cout << "Critical lateral distance: " << critical_lateral_distance << std::endl;
-                    // std::cout << "longitudinalDist: " << longitudinalDist << std::endl;
-                    trajectory_costs[it].bBlocked = true;
-                }   
-
-                if(lateralDist != 0)
-                    trajectory_costs[it].lateral_cost += 1.0/lateralDist;
-
-                if(longitudinalDist != 0)
-                    trajectory_costs[it].longitudinal_cost += 1.0/fabs(longitudinalDist);
-
-                if(longitudinalDist >= -critical_long_front_distance && longitudinalDist < trajectory_costs[it].closest_obj_distance)
-                {
-                    trajectory_costs[it].closest_obj_distance = longitudinalDist;
-                    trajectory_costs[it].closest_obj_velocity = 0; // TODO: obstacle_waypoints[io].v;
-                }
-            }
-        }
-    }
-
-    // // Method 2 for collision-checking
-    // for(int i = 0; i < roll_outs.size(); i++)
-    // {
-    //     double closest_obs_distance = PlannerHelpers::checkTrajectoryForCollision(roll_outs[i], circle_obstacles, box_obstacles,
-    //                                                                                     SAFETY_RADIUS_, VEHICLE_WIDTH_, VEHICLE_LENGTH_,
-    //                                                                                     WHEELBASE_LENGTH_, HORIZONTAL_SAFETY_DISTANCE_, VERTICAL_SAFETY_DISTANCE_);
-    //     std::cout << "Closest obstacle distance: " << closest_obs_distance << std::endl;
-    //     if(closest_obs_distance == -1) // collision
-    //     {
-    //         trajectory_costs[i].bBlocked = true;
-    //         trajectory_costs[i].closest_obj_cost = 1.0/0.001;
-    //         continue;
-    //     }
-    //     trajectory_costs[i].closest_obj_cost = 1.0/closest_obs_distance;
-    // }
 }
 
 int main(int argc, char** argv)

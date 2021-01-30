@@ -83,6 +83,7 @@ private:
     double LAT_WEIGHT_;
     double LONG_WEIGHT_;
     double COLLISION_WEIGHT_;
+    double CURVATURE_WEIGHT_;
 
     // Subscribers and Publishers
     ros::Subscriber odom_sub;
@@ -120,9 +121,8 @@ private:
     // Local Planning functions
     void extractGlobalPathSection(std::vector<Waypoint>& extracted_path);
     void generateRollOuts(const std::vector<Waypoint>& path, std::vector<std::vector<Waypoint>>& roll_outs);
-    PathCost doOneStepStatic(const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, std::vector<PathCost>& trajectory_costs);
-    void calculateLateralAndLongitudinalCostsStatic(std::vector<PathCost>& trajectory_costs, const std::vector<std::vector<Waypoint>>& roll_outs, 
-                                                    const std::vector<Waypoint>& extracted_path, std::vector<Waypoint>& contour_points);
+    PathCost doOneStepStatic(const std::vector<std::vector<Waypoint>>& roll_outs, const std::vector<Waypoint>& extracted_path, 
+                                std::vector<PathCost>& trajectory_costs);
 
     // Global Variables
     bool b_global_path;
