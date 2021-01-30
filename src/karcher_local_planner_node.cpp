@@ -304,7 +304,7 @@ void KarcherLocalPlannerNode::extractGlobalPathSection(std::vector<Waypoint>& ex
 
     PlannerHelpers::fixPathDensity(extracted_path, PATH_DENSITY_);
     PlannerHelpers::smoothPath(extracted_path, SMOOTH_TOLERANCE_, SMOOTH_DATA_WEIGHT_, SMOOTH_WEIGHT_);
-    PlannerHelpers::calculateAngleAndCost(extracted_path);
+    PlannerHelpers::calculateAngleAndCost(extracted_path, prev_cost);
 
     nav_msgs::Path path;
     VisualizationHelpers::createExtractedPathMarker(extracted_path, path);
@@ -513,7 +513,7 @@ void KarcherLocalPlannerNode::generateRollOuts(const std::vector<Waypoint>& path
     for(int i = 0; i < ROLL_OUTS_NUMBER_+1; i++)
     {
         PlannerHelpers::smoothPath(roll_outs[i], SMOOTH_TOLERANCE_, SMOOTH_DATA_WEIGHT_, SMOOTH_WEIGHT_);
-        PlannerHelpers::calculateAngleAndCost(roll_outs[i]);
+        PlannerHelpers::calculateAngleAndCost(roll_outs[i], prev_cost);
         PlannerHelpers::predictConstantTimeCostForTrajectory(roll_outs[i], current_state);
     }
 

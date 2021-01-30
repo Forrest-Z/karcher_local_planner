@@ -8,12 +8,13 @@ project(karcher_local_planner)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  geometry_msgs
-  nav_msgs
   roscpp
   rospy
-  tf
   std_msgs
+  geometry_msgs
+  nav_msgs
+  message_generation
+  tf
   obstacle_detector
 )
 
@@ -109,7 +110,7 @@ generate_messages(
 catkin_package(
   INCLUDE_DIRS include
 #  LIBRARIES karcher_local_planner
-#  CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs
+  CATKIN_DEPENDS message_runtime std_msgs
 #  DEPENDS system_lib
 )
 
@@ -125,10 +126,10 @@ include_directories(
 )
 
 ## Declare a C++ library
-#add_library(planner_helpers
-#  include/planner_helpers/visualization_helper.h
-#  include/planner_helpers/visualization_helper.cpp
-#)
+add_library(helpers
+  src/planner_helpers.cpp
+  src/visualization_helpers.cpp
+)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -139,6 +140,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(karcher_local_planner src/karcher_local_planner_node.cpp)
+target_link_libraries(karcher_local_planner helpers)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
